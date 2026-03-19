@@ -1,5 +1,0 @@
-# Additional dependencies for Tourist Attractions ingest DAG
-# Install after Airflow: pip install -r requirements-tourist-ingest.txt
-
-pymysql>=1.1.0
-sqlalchemy>=2.0.0
