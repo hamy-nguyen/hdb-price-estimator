@@ -1,7 +1,7 @@
 # MySQL Setup for Tourist Attractions Ingest DAG
 
 Step-by-step instructions to set up MySQL for the tourist attractions pipeline.
-
+service mysql start
 ---
 
 ## 1. Install MySQL Server 
