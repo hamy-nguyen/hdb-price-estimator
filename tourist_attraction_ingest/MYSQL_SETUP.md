@@ -1,7 +1,12 @@
-# MySQL Setup for Tourist Attractions Ingest DAG
+# MySQL Setup for Ingest DAG (`data_ingest`)
 
-Step-by-step instructions to set up MySQL for the tourist attractions pipeline.
-service mysql start
+Step-by-step instructions to set up MySQL for the ingest pipeline (DAG file: `airflow/dags/ingest_dag.py`).
+
+```bash
+# Start MySQL when needed (Linux)
+sudo service mysql start
+```
+
 ---
 
 ## 1. Install MySQL Server 
@@ -106,6 +111,12 @@ conn.close()
 ## 7. Run the DAG
 
 1. Restart Airflow (scheduler, dag-processor, api-server) if needed
-2. Unpause the DAG `tourist_attractions_ingest` in the Airflow UI
+2. Unpause the DAG **`data_ingest`** in the Airflow UI (defined in `airflow/dags/ingest_dag.py`)
 3. Trigger a run or wait for the daily schedule
-4. Check the `tourist_attractions` table:
+4. Check the tables in HDB_Data
+
+
+## 8. Restart the DAG run 
+```bash
+airflow dags trigger data_ingest
+```

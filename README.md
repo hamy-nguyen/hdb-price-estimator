@@ -34,7 +34,7 @@ In the Airflow UI: **Admin** → **Connections** → Add connection **mysql_defa
    pip install apache-airflow-providers-mysql
    ```
 
-4. **Run the DAG** — Unpause `tourist_attractions_ingest` in the Airflow UI and trigger a run, or wait for the daily schedule.
+4. **Run the DAG** — Unpause `data_ingest` (DAG file: `airflow/dags/ingest_dag.py`) in the Airflow UI and trigger a run, or wait for the daily schedule.
 
 5. **Verify** — Check the `tourist_attractions` table:
    ```bash
@@ -71,7 +71,7 @@ This project includes an Airflow pipeline that extracts Singapore tourist attrac
    airflow api-server
    ```
 
-4. **Run the DAG**: Open http://localhost:8081 → DAGs → `tourist_attractions_ingest` → Unpause → Trigger Run.
+4. **Run the DAG**: Open http://localhost:8081 → DAGs → `data_ingest` (`airflow/dags/ingest_dag.py`) → Unpause → Trigger Run.
 
 5. **Verify**: After the run completes, check the `tourist_attractions` table:
    ```bash
@@ -80,9 +80,12 @@ This project includes an Airflow pipeline that extracts Singapore tourist attrac
 
 ### Pipeline Overview
 
-| Task | Description |
-|------|-------------|
-| `extract_tourist_attractions` | Fetches data from data.gov.sg API, parses CSV/JSON |
-| `load_to_mysql` | Loads extracted data into the `tourist_attractions` table (full refresh) |
+DAG id: **`data_ingest`** · file: **`airflow/dags/ingest_dag.py`**
+
+| Task pattern | Description |
+|--------------|-------------|
+| `drop_tables_before_ingest` | Drops all ingest target tables (full refresh) |
+| `extract_<source>` | Fetches data per source (API or local CSV); see `tourist_attraction_ingest/dag_helpers.py` → `SOURCES` |
+| `load_<source>` | Loads that source into MySQL |
 
 Schedule: daily (`@daily`).
