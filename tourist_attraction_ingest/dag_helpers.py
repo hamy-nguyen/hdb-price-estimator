@@ -4,6 +4,7 @@ Supports: poll-download API, CKAN datastore_search API, local CSV files.
 """
 
 import io
+import logging
 import time
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+_log = logging.getLogger(__name__)
 
 
 def _http_session() -> requests.Session:
@@ -210,7 +213,14 @@ def load_to_mysql(
 
     df = pd.read_json(io.StringIO(json_str))
     if df.empty:
+        _log.warning(
+            "load_to_mysql: table=%r rows=0 (skipping CREATE/INSERT). "
+            "Check extract task XCom and logs.",
+            table_name,
+        )
         return
+
+    _log.info("load_to_mysql: table=%r rows=%s", table_name, len(df))
 
     from airflow.hooks.base import BaseHook
     conn = BaseHook.get_connection(mysql_conn_id)
