@@ -1,0 +1,7 @@
+venv/
+
+# Airflow
+airflow/
+logs/
+airflow.db
+*.pid
