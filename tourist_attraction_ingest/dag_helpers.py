@@ -4,17 +4,38 @@ Supports: poll-download API, CKAN datastore_search API, local CSV files.
 """
 
 import io
+import time
 from pathlib import Path
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _http_session() -> requests.Session:
+    """Session with retries for data.gov.sg rate limits (429) and transient errors."""
+    session = requests.Session()
+    retries = Retry(
+        total=12,
+        connect=5,
+        read=8,
+        backoff_factor=3,
+        status_forcelist=(429, 500, 502, 503),
+        allowed_methods=("GET",),
+        respect_retry_after_header=True,
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 # Source configs: (api_type, dataset_id/resource_id, api_base or file_path)
 SOURCES = {
     "tourist_attractions": {
-        "api_type": "datastore_search",
+        "api_type": "poll-download",
         "dataset_id": "d_0f2f47515425404e6c9d2a040dd87354",
         "api_base": "https://api-open.data.gov.sg/v1/public/api/datasets",
         "table_name": "tourist_attractions",
@@ -26,9 +47,9 @@ SOURCES = {
         "table_name": "carpark_data",
     },
     "resale_flat_price": {
-        "api_type": "datastore_search",
-        "resource_id": "d_8b84c4ee58e3cfc0ece0d773c8ca6abc",
-        "api_base": "https://data.gov.sg/api/action/datastore_search",
+        "api_type": "poll-download",
+        "dataset_id": "d_8b84c4ee58e3cfc0ece0d773c8ca6abc",
+        "api_base": "https://api-open.data.gov.sg/v1/public/api/datasets",
         "table_name": "resale_flat_price",
     },
     "hdb": {"api_type": "csv_file", "file_path": "dataset/hdb.csv", "table_name": "hdb"},
@@ -52,14 +73,17 @@ def extract_from_source(
 
     api_type: "poll-download" | "datastore_search" | "csv_file"
     """
+    session = _http_session()
+
     if api_type == "poll-download":
         url = f"{api_base.rstrip('/')}/{dataset_id}/poll-download"
-        response = requests.get(url)
+        response = session.get(url, timeout=120)
+        response.raise_for_status()
         data = response.json()
         if data.get("code", 0) != 0:
             raise RuntimeError(f"API error: {data.get('errMsg', 'Unknown error')}")
         download_url = data["data"]["url"]
-        response = requests.get(download_url)
+        response = session.get(download_url, timeout=300)
         try:
             df = pd.read_csv(io.StringIO(response.text))
         except (ValueError, pd.errors.ParserError):
@@ -70,11 +94,14 @@ def extract_from_source(
 
     elif api_type == "datastore_search":
         rid = resource_id or dataset_id
-        url = f"{api_base.rstrip('/')}?resource_id={rid}&limit=32000"
+        page_limit = 5000
+        url = f"{api_base.rstrip('/')}?resource_id={rid}&limit={page_limit}"
         all_records = []
         offset = 0
         while True:
-            r = requests.get(url + f"&offset={offset}")
+            if offset > 0:
+                time.sleep(1.5)
+            r = session.get(url + f"&offset={offset}", timeout=120)
             r.raise_for_status()
             data = r.json()
             if "result" not in data or "records" not in data["result"]:
@@ -83,7 +110,7 @@ def extract_from_source(
             if not records:
                 break
             all_records.extend(records)
-            if len(records) < 32000:
+            if len(records) < page_limit:
                 break
             offset += len(records)
         df = pd.DataFrame(all_records) if all_records else pd.DataFrame()
