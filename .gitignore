@@ -1,8 +1,11 @@
 venv/
 .env
 
-# Airflow
-airflow/
+airflow/*
+!airflow/dags/
+airflow/dags/*
+!airflow/dags/ingest_dag.py
+
 logs/
 airflow.db
 *.pid
