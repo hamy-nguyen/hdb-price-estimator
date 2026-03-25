@@ -163,11 +163,15 @@ def ingest_transport_to_school(planning_areas_df):
 
     return transport_school_df
 
-def get_transport_to_work(planning_areas_df):
+def ingest_transport_to_work(planning_areas_df):
     '''
     Fetches transport to work data from the OneMap API for each planning area
-    and saves it to a CSV file.
+    and ingests it into the MySQL database.
     '''
+    engine = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
+    )
+
     all_transport_work_data = []
 
     for _, row in planning_areas_df.iterrows():
@@ -230,7 +234,12 @@ def get_transport_to_work(planning_areas_df):
             break
 
     transport_work_df = pd.DataFrame(all_transport_work_data)
-    transport_work_df.to_csv(f"{_ROOT}/dataset/onemap_transport_to_work.csv", index=False)
+    transport_work_df.to_sql(
+        "raw_onemap_transport_work",
+        con=engine,
+        if_exists="replace",
+        index=False
+    )
 
     return transport_work_df
 
@@ -358,4 +367,4 @@ if __name__ == "__main__":
         "SELECT * FROM raw_onemap_planning_areas",
         con=engine
     )
-    ingest_transport_to_school(planning_areas_df)
+    ingest_transport_to_work(planning_areas_df)
