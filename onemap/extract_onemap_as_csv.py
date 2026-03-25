@@ -52,7 +52,7 @@ YEAR_MAP = {
 
 def ingest_planning_areas():
     '''
-    Fetches planning areas over the years from the OneMap API and saves them to a CSV file.
+    Fetches planning areas over the years from the OneMap API and ingests it into the MySQL database.
     '''
     engine = create_engine(
         f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
@@ -83,11 +83,15 @@ def ingest_planning_areas():
 
     return planning_areas_df
 
-def get_transport_to_school(planning_areas_df):
+def ingest_transport_to_school(planning_areas_df):
     '''
     Fetches transport to school data from the OneMap API for each planning area
-    and saves it to a CSV file.
+    and ingests it into the MySQL database.
     '''
+    engine = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
+    )
+
     all_transport_school_data = []
 
     for _, row in planning_areas_df.iterrows():
@@ -150,7 +154,12 @@ def get_transport_to_school(planning_areas_df):
             break
 
     transport_school_df = pd.DataFrame(all_transport_school_data)
-    transport_school_df.to_csv(f"{_ROOT}/dataset/onemap_transport_to_school.csv", index=False)
+    transport_school_df.to_sql(
+        "raw_onemap_transport_school",
+        con=engine,
+        if_exists="replace",
+        index=False
+    )
 
     return transport_school_df
 
@@ -342,5 +351,11 @@ def get_dwelling_household(planning_areas_df):
     return dwelling_df
 
 if __name__ == "__main__":
-    # planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv")
-    ingest_planning_areas()
+    engine = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
+    )
+    planning_areas_df = pd.read_sql(
+        "SELECT * FROM raw_onemap_planning_areas",
+        con=engine
+    )
+    ingest_transport_to_school(planning_areas_df)
