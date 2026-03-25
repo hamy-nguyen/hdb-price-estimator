@@ -30,6 +30,7 @@ HEADERS = {"Authorization": ACCESS_TOKEN}
 PLANNING_AREA_URL = "https://www.onemap.gov.sg/api/public/popapi/getPlanningareaNames"
 TRANSPORT_TO_SCHOOL_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportSchool"
 TRANSPORT_TO_WORK_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportWork"
+TENANCY_URL = "https://www.onemap.gov.sg/api/public/popapi/getTenancy"
 
 # Constants for population data
 YEARS_POP_QUERY = [2000, 2010, 2015, 2020]
@@ -206,6 +207,62 @@ def get_transport_to_work(planning_areas_df):
 
     return transport_work_df
 
+def get_tenancy(planning_areas_df):
+    '''
+    Fetches tenancy data from the OneMap API for each planning area
+    and saves it to a CSV file.
+    '''
+    all_tenancy_data = []
+
+    for _, row in planning_areas_df.iterrows():
+
+        planning_area = row['planning_area']
+        year = YEAR_MAP.get(row['year'], row['year'])
+
+        print(f"Fetching tenancy data for {planning_area} in {year}...")
+        
+        params = {
+            "planningArea": planning_area,
+            "year": year
+        }
+
+        while True:
+            try:
+                response = requests.get(
+                    TENANCY_URL, 
+                    params=params, 
+                    headers=HEADERS
+                )
+            except:
+                return None
+            
+            # rate limit exceeded
+            if response.status_code == 429:
+                print("Rate limit exceeded. Waiting before retrying...")
+                time.sleep(10)  # wait for 10 seconds before retrying
+                continue
+
+            data = response.json()
+
+            all_tenancy_data.append({
+                "planning_area": planning_area,
+                "year": year,
+                "owner": data[0]['owner'] if isinstance(data, list) and len(data) > 0 else None,
+                "tenant": data[0]['tenant'] if isinstance(data, list) and len(data) > 0 else None,
+                "others": data[0]['others'] if isinstance(data, list) and len(data) > 0 else None
+            })
+
+            if isinstance(data, dict) and data.get("Result") == "No Data Available!":
+                print(f"No data for {planning_area} in {year}")
+                break
+
+            break
+
+    tenancy_df = pd.DataFrame(all_tenancy_data)
+    tenancy_df.to_csv(f"{_ROOT}/dataset/tenancy.csv", index=False)
+
+    return tenancy_df
+
 if __name__ == "__main__":
     planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/planning_areas.csv")
-    get_transport_to_work(planning_areas_df)
+    get_tenancy(planning_areas_df)
