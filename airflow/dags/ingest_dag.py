@@ -19,6 +19,7 @@ from tourist_attraction_ingest.dag_helpers import (
     extract_from_source,
     load_to_mysql,
     drop_tables_before_ingest,
+    watermark_extracted_data,
     SOURCES,
 )
 
@@ -50,6 +51,7 @@ with DAG(
         api_type = config["api_type"]
         table_name = config["table_name"]
         extract_task_id = f"extract_{source_key}"
+        watermark_task_id = f"watermark_{source_key}"
         load_task_id = f"load_{source_key}"
 
         # Extract task
@@ -87,16 +89,23 @@ with DAG(
                 },
             )
 
-        # Load task
+        # Fingerprint / watermark (bt4301 row hashes → column `_fp`) before MySQL load
+        watermark_task = PythonOperator(
+            task_id=watermark_task_id,
+            python_callable=watermark_extracted_data,
+            op_kwargs={"extract_task_id": extract_task_id},
+        )
+
+        # Load task — pulls JSON from watermark task (includes `_fp`)
         load_task = PythonOperator(
             task_id=load_task_id,
             python_callable=load_to_mysql,
             op_kwargs={
-                "extract_task_id": extract_task_id,
+                "extract_task_id": watermark_task_id,
                 "table_name": table_name,
                 "mysql_conn_id": MYSQL_CONN_ID,
             },
         )
 
-        drop_tables_task >> extract_task >> load_task
-        tasks[source_key] = (extract_task, load_task)
+        drop_tables_task >> extract_task >> watermark_task >> load_task
+        tasks[source_key] = (extract_task, watermark_task, load_task)
