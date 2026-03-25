@@ -31,6 +31,7 @@ PLANNING_AREA_URL = "https://www.onemap.gov.sg/api/public/popapi/getPlanningarea
 TRANSPORT_TO_SCHOOL_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportSchool"
 TRANSPORT_TO_WORK_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportWork"
 TENANCY_URL = "https://www.onemap.gov.sg/api/public/popapi/getTenancy"
+DWELLING_URL = "https://www.onemap.gov.sg/api/public/popapi/getTypeOfDwellingHousehold"
 
 # Constants for population data
 YEARS_POP_QUERY = [2000, 2010, 2015, 2020]
@@ -263,6 +264,66 @@ def get_tenancy(planning_areas_df):
 
     return tenancy_df
 
+def get_dwelling_household(planning_areas_df):
+    '''
+    Fetches dwelling types (household-level) data from the OneMap API for each planning area
+    and saves it to a CSV file.
+    '''
+    all_dwelling_data = []
+
+    for _, row in planning_areas_df.iterrows():
+
+        planning_area = row['planning_area']
+        year = YEAR_MAP.get(row['year'], row['year'])
+
+        print(f"Fetching dwelling data for {planning_area} in {year}...")
+        
+        params = {
+            "planningArea": planning_area,
+            "year": year
+        }
+
+        while True:
+            try:
+                response = requests.get(
+                    DWELLING_URL, 
+                    params=params, 
+                    headers=HEADERS
+                )
+            except:
+                return None
+            
+            # rate limit exceeded
+            if response.status_code == 429:
+                print("Rate limit exceeded. Waiting before retrying...")
+                time.sleep(10)  # wait for 10 seconds before retrying
+                continue
+
+            data = response.json()
+
+            all_dwelling_data.append({
+                "planning_area": planning_area,
+                "year": year,
+                "hdb_1_and_2_room_flats": data[0]['hdb_1_and_2_room_flats'] if isinstance(data, list) and len(data) > 0 else None,
+                "hdb_3_room_flats": data[0]['hdb_3_room_flats'] if isinstance(data, list) and len(data) > 0 else None,
+                "hdb_4_room_flats": data[0]['hdb_4_room_flats'] if isinstance(data, list) and len(data) > 0 else None,
+                "hdb_5_room_and_executive_flats": data[0]['hdb_5_room_and_executive_flats'] if isinstance(data, list) and len(data) > 0 else None,
+                "condominiums_and_other_apartments": data[0]['condominiums_and_other_apartments'] if isinstance(data, list) and len(data) > 0 else None,
+                "landed_properties": data[0]['landed_properties'] if isinstance(data, list) and len(data) > 0 else None,
+                "others": data[0]['others'] if isinstance(data, list) and len(data) > 0 else None
+            })
+
+            if isinstance(data, dict) and data.get("Result") == "No Data Available!":
+                print(f"No data for {planning_area} in {year}")
+                break
+
+            break
+
+    dwelling_df = pd.DataFrame(all_dwelling_data)
+    dwelling_df.to_csv(f"{_ROOT}/dataset/onemap_dwelling.csv", index=False)
+
+    return dwelling_df
+
 if __name__ == "__main__":
     planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv")
-    get_tenancy(planning_areas_df)
+    get_dwelling_household(planning_areas_df)
