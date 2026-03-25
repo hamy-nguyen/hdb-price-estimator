@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-# Repo root (parent of onemap_ingest/)
+# Repo root (parent of onemap/)
 _ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_ROOT / ".env")
 
@@ -26,9 +26,12 @@ AUTH_DATA = AUTH_RESPONSE.json()
 ACCESS_TOKEN = AUTH_DATA.get("access_token")
 HEADERS = {"Authorization": ACCESS_TOKEN}
 
+# API endpoints
 PLANNING_AREA_URL = "https://www.onemap.gov.sg/api/public/popapi/getPlanningareaNames"
 TRANSPORT_TO_SCHOOL_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportSchool"
+TRANSPORT_TO_WORK_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportWork"
 
+# Constants for population data
 YEARS_POP_QUERY = [2000, 2010, 2015, 2020]
 YEAR_MAP = {
     1998: 2000,
@@ -57,7 +60,7 @@ def get_planning_areas():
             })
         
     planning_areas_df = pd.DataFrame(all_planning_areas)
-    planning_areas_df.to_csv("dataset/planning_areas.csv", index=False)
+    planning_areas_df.to_csv(f"{_ROOT}/dataset/planning_areas.csv", index=False)
 
     return planning_areas_df
 
@@ -128,10 +131,81 @@ def get_transport_to_school(planning_areas_df):
             break
 
     transport_school_df = pd.DataFrame(all_transport_school_data)
-    transport_school_df.to_csv("dataset/transport_to_school.csv", index=False)
+    transport_school_df.to_csv(f"{_ROOT}/dataset/transport_to_school.csv", index=False)
 
     return transport_school_df
 
+def get_transport_to_work(planning_areas_df):
+    '''
+    Fetches transport to work data from the OneMap API for each planning area
+    and saves it to a CSV file.
+    '''
+    all_transport_work_data = []
+
+    for _, row in planning_areas_df.iterrows():
+
+        planning_area = row['planning_area']
+        year = YEAR_MAP.get(row['year'], row['year'])
+
+        print(f"Fetching work transport data for {planning_area} in {year}...")
+        
+        params = {
+            "planningArea": planning_area,
+            "year": year
+        }
+
+        while True:
+            try:
+                response = requests.get(
+                    TRANSPORT_TO_WORK_URL, 
+                    params=params, 
+                    headers=HEADERS
+                )
+            except:
+                return None
+            
+            # rate limit exceeded
+            if response.status_code == 429:
+                print("Rate limit exceeded. Waiting before retrying...")
+                time.sleep(10)  # wait for 10 seconds before retrying
+                continue
+
+            data = response.json()
+
+            all_transport_work_data.append({
+                "planning_area": planning_area,
+                "year": year,
+                "bus": data[0]['bus'] if isinstance(data, list) and len(data) > 0 else None,
+                "mrt": data[0]['mrt'] if isinstance(data, list) and len(data) > 0 else None,
+                "mrt_bus": data[0]['mrt_bus'] if isinstance(data, list) and len(data) > 0 else None,
+                "mrt_car": data[0]['mrt_car'] if isinstance(data, list) and len(data) > 0 else None,
+                "mrt_other": data[0]['mrt_other'] if isinstance(data, list) and len(data) > 0 else None,
+                "taxi": data[0]['taxi'] if isinstance(data, list) and len(data) > 0 else None,
+                "car": data[0]['car'] if isinstance(data, list) and len(data) > 0 else None,
+                "pvt_chartered_bus": data[0]['pvt_chartered_bus'] if isinstance(data, list) and len(data) > 0 else None,
+                "lorry_pickup": data[0]['lorry_pickup'] if isinstance(data, list) and len(data) > 0 else None,
+                "motorcycle_scooter": data[0]['motorcycle_scooter'] if isinstance(data, list) and len(data) > 0 else None,
+                "others": data[0]['others'] if isinstance(data, list) and len(data) > 0 else None,
+                "no_transport_required": data[0]['no_transport_required'] if isinstance(data, list) and len(data) > 0 else None,
+                "other_combi_mrt_or_bus": data[0]['other_combi_mrt_or_bus'] if isinstance(data, list) and len(data) > 0 else None,
+                "mrt_lrt_only": data[0]['mrt_lrt_only'] if isinstance(data, list) and len(data) > 0 else None,
+                "mrt_lrt_and_bus": data[0]['mrt_lrt_and_bus'] if isinstance(data, list) and len(data) > 0 else None,
+                "other_combi_mrt_lrt_or_bus": data[0]['other_combi_mrt_lrt_or_bus'] if isinstance(data, list) and len(data) > 0 else None,
+                "taxi_pvt_hire_car_only": data[0]['taxi_pvt_hire_car_only'] if isinstance(data, list) and len(data) > 0 else None,
+                "pvt_chartered_bus_van": data[0]['pvt_chartered_bus_van'] if isinstance(data, list) and len(data) > 0 else None,
+            })
+
+            if isinstance(data, dict) and data.get("Result") == "No Data Available!":
+                print(f"No data for {planning_area} in {year}")
+                break
+
+            break
+
+    transport_work_df = pd.DataFrame(all_transport_work_data)
+    transport_work_df.to_csv(f"{_ROOT}/dataset/transport_to_work.csv", index=False)
+
+    return transport_work_df
+
 if __name__ == "__main__":
-    planning_areas_df = pd.read_csv('dataset/planning_areas.csv')
-    get_transport_to_school(planning_areas_df)
+    planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/planning_areas.csv")
+    get_transport_to_work(planning_areas_df)
