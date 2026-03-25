@@ -60,6 +60,16 @@ SOURCES = {
     "bus_vol": {"api_type": "csv_file", "file_path": "dataset/bus_vol.csv", "table_name": "bus_vol"},
     "bus_line": {"api_type": "csv_file", "file_path": "dataset/bus_line.csv", "table_name": "bus_line"},
     "mrt": {"api_type": "csv_file", "file_path": "dataset/mrt.csv", "table_name": "mrt"},
+    "planning_areas": {
+        "api_type": "csv_file",
+        "file_path": "dataset/planning_areas.csv",
+        "table_name": "planning_areas",
+    },
+    "transport_to_school": {
+        "api_type": "csv_file",
+        "file_path": "dataset/transport_to_school.csv",
+        "table_name": "transport_to_school",
+    },
 }
 
 
@@ -192,6 +202,37 @@ def _flatten_geojson(df):
     return pd.DataFrame(rows)
 
 
+def watermark_extracted_data(extract_task_id: str, **kwargs) -> str:
+    """
+    Pull extract JSON from XCom, add per-row SHA-256 fingerprint column `_fp` (bt4301),
+    return JSON for the load task.
+
+    Run **after extract, before load** so fingerprints match the ingested rows without
+    re-querying MySQL (tables are all-TEXT with no primary key).
+    """
+    import data_watermarking as dw
+
+    ti = kwargs["ti"]
+    json_str = ti.xcom_pull(task_ids=extract_task_id)
+    if not json_str:
+        raise ValueError(f"No data from extract task: {extract_task_id}")
+
+    df = pd.read_json(io.StringIO(json_str))
+    if df.empty:
+        return df.to_json(date_format="iso", orient="records")
+
+    df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
+    df = df.fillna(value=None)
+
+    # Drop existing _fp if re-processing, then recompute
+    if dw.FINGERPRINT_COL in df.columns:
+        df = df.drop(columns=[dw.FINGERPRINT_COL])
+
+    df = dw.add_fingerprint_column(df)
+    return df.to_json(date_format="iso", orient="records")
+
+
 def load_to_mysql(
     extract_task_id: str,
     table_name: str,
@@ -200,6 +241,9 @@ def load_to_mysql(
 ) -> None:
     """
     Load data from XCom into MySQL. Replaces table content (full refresh).
+
+    ``extract_task_id`` is the upstream task whose return value is the JSON records
+    (usually ``watermark_<source>`` when watermarking is enabled).
     """
     try:
         import pymysql

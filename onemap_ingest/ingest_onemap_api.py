@@ -1,8 +1,14 @@
 import os
-from fastapi import params
-import requests
-import pandas as pd
 import time
+from pathlib import Path
+
+import pandas as pd
+import requests
+from dotenv import load_dotenv
+
+# Repo root (parent of onemap_ingest/)
+_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_ROOT / ".env")
 
 # Set-up authentication for OneMap API
 

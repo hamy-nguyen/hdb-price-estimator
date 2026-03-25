@@ -49,7 +49,7 @@ This project includes an Airflow pipeline that extracts Singapore tourist attrac
 
 - MySQL server running with a database and user (see `tourist_attraction_ingest/MYSQL_SETUP.md` for setup)
 - Apache Airflow installed and configured
-- Dependencies: `pip install -r requirements-tourist-ingest.txt`
+- Dependencies: `pip install -r requirements.txt`
 
 ### Quick Start
 
@@ -65,6 +65,11 @@ This project includes an Airflow pipeline that extracts Singapore tourist attrac
    - Port: `3306`
 
 3. **Start Airflow** (if not running):
+Set the AIRFLOW_HOME if needed:
+   ```bash
+   export AIRFLOW_HOME=/root/hdb-price-estimator/airflow
+   ```
+Run the airflow:
    ```bash
    airflow scheduler &
    airflow dag-processor &
