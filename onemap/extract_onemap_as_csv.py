@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 
 # Repo root (parent of onemap/)
 _ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,13 @@ AUTH_DATA = AUTH_RESPONSE.json()
 ACCESS_TOKEN = AUTH_DATA.get("access_token")
 HEADERS = {"Authorization": ACCESS_TOKEN}
 
+# AWS RDS MySQL credentials
+host = os.environ["AWS_RDS_HOST"]
+port = os.environ["AWS_RDS_PORT"]
+user = os.environ["AWS_RDS_USER"]
+password = os.environ["AWS_RDS_PASSWORD"]
+db = "hdb-price-estimator"
+
 # API endpoints
 PLANNING_AREA_URL = "https://www.onemap.gov.sg/api/public/popapi/getPlanningareaNames"
 TRANSPORT_TO_SCHOOL_URL = "https://www.onemap.gov.sg/api/public/popapi/getModeOfTransportSchool"
@@ -42,10 +50,14 @@ YEAR_MAP = {
     2019: 2020
 }
 
-def get_planning_areas():
+def ingest_planning_areas():
     '''
     Fetches planning areas over the years from the OneMap API and saves them to a CSV file.
     '''
+    engine = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
+    )
+
     years = [1998, 2008, 2014, 2019]
 
     all_planning_areas = []
@@ -62,7 +74,12 @@ def get_planning_areas():
             })
         
     planning_areas_df = pd.DataFrame(all_planning_areas)
-    planning_areas_df.to_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv", index=False)
+    planning_areas_df.to_sql(
+        "raw_onemap_planning_areas",
+        con=engine,
+        if_exists="replace",
+        index=False
+    )
 
     return planning_areas_df
 
@@ -325,5 +342,5 @@ def get_dwelling_household(planning_areas_df):
     return dwelling_df
 
 if __name__ == "__main__":
-    planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv")
-    get_dwelling_household(planning_areas_df)
+    # planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv")
+    ingest_planning_areas()
