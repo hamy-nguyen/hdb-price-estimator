@@ -1,7 +1,6 @@
 import os
 import time
 from pathlib import Path
-
 import pandas as pd
 import requests
 from dotenv import load_dotenv
@@ -11,7 +10,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_ROOT / ".env")
 
 # Set-up authentication for OneMap API
-
 AUTH_URL = "https://www.onemap.gov.sg/api/auth/post/getToken"
 PAYLOAD = {
     "email": os.environ["ONEMAP_EMAIL"],
