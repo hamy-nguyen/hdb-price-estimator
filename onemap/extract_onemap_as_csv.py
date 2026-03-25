@@ -32,7 +32,7 @@ host = os.environ["AWS_RDS_HOST"]
 port = os.environ["AWS_RDS_PORT"]
 user = os.environ["AWS_RDS_USER"]
 password = os.environ["AWS_RDS_PASSWORD"]
-db = "hdb-price-estimator"
+db = os.environ["AWS_RDS_DB"]
 
 # API endpoints
 PLANNING_AREA_URL = "https://www.onemap.gov.sg/api/public/popapi/getPlanningareaNames"
@@ -243,11 +243,15 @@ def ingest_transport_to_work(planning_areas_df):
 
     return transport_work_df
 
-def get_tenancy(planning_areas_df):
+def ingest_tenancy(planning_areas_df):
     '''
     Fetches tenancy data from the OneMap API for each planning area
-    and saves it to a CSV file.
+    and ingests it into the MySQL database.
     '''
+    engine = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
+    )
+
     all_tenancy_data = []
 
     for _, row in planning_areas_df.iterrows():
@@ -295,7 +299,12 @@ def get_tenancy(planning_areas_df):
             break
 
     tenancy_df = pd.DataFrame(all_tenancy_data)
-    tenancy_df.to_csv(f"{_ROOT}/dataset/onemap_tenancy.csv", index=False)
+    tenancy_df.to_sql(
+        "raw_onemap_tenancy",
+        con=engine,
+        if_exists="replace",
+        index=False
+    )
 
     return tenancy_df
 
@@ -367,4 +376,4 @@ if __name__ == "__main__":
         "SELECT * FROM raw_onemap_planning_areas",
         con=engine
     )
-    ingest_transport_to_work(planning_areas_df)
+    ingest_tenancy(planning_areas_df)
