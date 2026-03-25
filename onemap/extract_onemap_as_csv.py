@@ -308,11 +308,14 @@ def ingest_tenancy(planning_areas_df):
 
     return tenancy_df
 
-def get_dwelling_household(planning_areas_df):
+def ingest_dwelling_household(planning_areas_df):
     '''
     Fetches dwelling types (household-level) data from the OneMap API for each planning area
-    and saves it to a CSV file.
+    and ingests it into the MySQL database.
     '''
+    engine = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
+    )
     all_dwelling_data = []
 
     for _, row in planning_areas_df.iterrows():
@@ -364,7 +367,12 @@ def get_dwelling_household(planning_areas_df):
             break
 
     dwelling_df = pd.DataFrame(all_dwelling_data)
-    dwelling_df.to_csv(f"{_ROOT}/dataset/onemap_dwelling.csv", index=False)
+    dwelling_df.to_sql(
+        "raw_onemap_dwelling",
+        con=engine,
+        if_exists="replace",
+        index=False
+    )
 
     return dwelling_df
 
@@ -376,4 +384,4 @@ if __name__ == "__main__":
         "SELECT * FROM raw_onemap_planning_areas",
         con=engine
     )
-    ingest_tenancy(planning_areas_df)
+    ingest_dwelling_household(planning_areas_df)
