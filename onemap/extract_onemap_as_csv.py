@@ -61,7 +61,7 @@ def get_planning_areas():
             })
         
     planning_areas_df = pd.DataFrame(all_planning_areas)
-    planning_areas_df.to_csv(f"{_ROOT}/dataset/planning_areas.csv", index=False)
+    planning_areas_df.to_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv", index=False)
 
     return planning_areas_df
 
@@ -132,7 +132,7 @@ def get_transport_to_school(planning_areas_df):
             break
 
     transport_school_df = pd.DataFrame(all_transport_school_data)
-    transport_school_df.to_csv(f"{_ROOT}/dataset/transport_to_school.csv", index=False)
+    transport_school_df.to_csv(f"{_ROOT}/dataset/onemap_transport_to_school.csv", index=False)
 
     return transport_school_df
 
@@ -203,7 +203,7 @@ def get_transport_to_work(planning_areas_df):
             break
 
     transport_work_df = pd.DataFrame(all_transport_work_data)
-    transport_work_df.to_csv(f"{_ROOT}/dataset/transport_to_work.csv", index=False)
+    transport_work_df.to_csv(f"{_ROOT}/dataset/onemap_transport_to_work.csv", index=False)
 
     return transport_work_df
 
@@ -259,10 +259,10 @@ def get_tenancy(planning_areas_df):
             break
 
     tenancy_df = pd.DataFrame(all_tenancy_data)
-    tenancy_df.to_csv(f"{_ROOT}/dataset/tenancy.csv", index=False)
+    tenancy_df.to_csv(f"{_ROOT}/dataset/onemap_tenancy.csv", index=False)
 
     return tenancy_df
 
 if __name__ == "__main__":
-    planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/planning_areas.csv")
+    planning_areas_df = pd.read_csv(f"{_ROOT}/dataset/onemap_planning_areas.csv")
     get_tenancy(planning_areas_df)
