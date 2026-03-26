@@ -19,7 +19,7 @@ db = os.environ["AWS_RDS_DB"]
 # data.gov.sg API keys and headers
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 HEADERS = {"X-Api-Key": DATA_GOV_API_KEY}
-RESALE_PRICES_API = "https://data.gov.sg/api/action/datastore_search"
+DATASTORE_API = "https://data.gov.sg/api/action/datastore_search"
 DATASET_ID = "d_23f946fa557947f93a8043bbef41dd09"
 
 def ingest_hdb_car_park ():
@@ -38,7 +38,7 @@ def ingest_hdb_car_park ():
             "offset": offset
         }
 
-        response = requests.get(RESALE_PRICES_API, headers=HEADERS, params=params).json()
+        response = requests.get(DATASTORE_API, headers=HEADERS, params=params).json()
         records = response["result"]["records"]
 
         if not records:
@@ -56,7 +56,6 @@ def ingest_hdb_car_park ():
     print(final_df)
 
     print(f"Ingesting HDB car park data to MySQL table raw_car_park...")
-    # need to keep track of the total number of records to find out what to update in the next run
     final_df.to_sql("raw_car_park",
                     con=engine,
                     if_exists="replace", 

@@ -19,7 +19,7 @@ db = os.environ["AWS_RDS_DB"]
 # data.gov.sg API keys and headers
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 HEADERS = {"X-Api-Key": DATA_GOV_API_KEY}
-RESALE_PRICES_API = "https://data.gov.sg/api/action/datastore_search"
+DATASTORE_API = "https://data.gov.sg/api/action/datastore_search"
 DATASET_ID = "d_8b84c4ee58e3cfc0ece0d773c8ca6abc"
 
 def ingest_resale_prices():
@@ -38,7 +38,7 @@ def ingest_resale_prices():
             "offset": offset
         }
 
-        response = requests.get(RESALE_PRICES_API, headers=HEADERS, params=params).json()
+        response = requests.get(DATASTORE_API, headers=HEADERS, params=params).json()
         records = response["result"]["records"]
 
         if not records:
