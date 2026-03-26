@@ -4,7 +4,6 @@ from pathlib import Path
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
 
 # Repo root (parent of onemap/)
 _ROOT = Path(__file__).resolve().parents[1]
