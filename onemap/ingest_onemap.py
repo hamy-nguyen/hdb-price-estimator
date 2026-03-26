@@ -6,7 +6,7 @@ import requests
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 
-# Repo root (parent of onemap/)
+# Repo root
 _ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_ROOT / ".env")
 
