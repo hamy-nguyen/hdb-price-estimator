@@ -13,10 +13,22 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
+import os
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 _log = logging.getLogger(__name__)
 
+load_dotenv(_PROJECT_ROOT / ".env")
+
+# AWS RDS MySQL credentials
+host = os.environ["AWS_RDS_HOST"]
+port = os.environ["AWS_RDS_PORT"]
+user = os.environ["AWS_RDS_USER"]
+password = os.environ["AWS_RDS_PASSWORD"]
+DB = os.environ["AWS_RDS_DB"]
 
 def _http_session() -> requests.Session:
     """Session with retries for data.gov.sg rate limits (429) and transient errors."""
@@ -41,34 +53,34 @@ SOURCES = {
         "api_type": "poll-download",
         "dataset_id": "d_0f2f47515425404e6c9d2a040dd87354",
         "api_base": "https://api-open.data.gov.sg/v1/public/api/datasets",
-        "table_name": "tourist_attractions",
+        "table_name": "raw_tourist_attractions",
     },
     "carpark_data": {
         "api_type": "datastore_search",
         "resource_id": "d_23f946fa557947f93a8043bbef41dd09",
         "api_base": "https://data.gov.sg/api/action/datastore_search",
-        "table_name": "carpark_data",
+        "table_name": "raw_carpark_data",
     },
     "resale_flat_price": {
         "api_type": "poll-download",
         "dataset_id": "d_8b84c4ee58e3cfc0ece0d773c8ca6abc",
         "api_base": "https://api-open.data.gov.sg/v1/public/api/datasets",
-        "table_name": "resale_flat_price",
+        "table_name": "raw_resale_flat_price",
     },
-    "hdb": {"api_type": "csv_file", "file_path": "dataset/hdb.csv", "table_name": "hdb"},
-    "poi": {"api_type": "csv_file", "file_path": "dataset/poi.csv", "table_name": "poi"},
-    "bus_vol": {"api_type": "csv_file", "file_path": "dataset/bus_vol.csv", "table_name": "bus_vol"},
-    "bus_line": {"api_type": "csv_file", "file_path": "dataset/bus_line.csv", "table_name": "bus_line"},
-    "mrt": {"api_type": "csv_file", "file_path": "dataset/mrt.csv", "table_name": "mrt"},
+    "hdb": {"api_type": "csv_file", "file_path": "dataset/hdb.csv", "table_name": "raw_hdb"},
+    "poi": {"api_type": "csv_file", "file_path": "dataset/poi.csv", "table_name": "raw_poi"},
+    "bus_vol": {"api_type": "csv_file", "file_path": "dataset/bus_vol.csv", "table_name": "raw_bus_vol"},
+    "bus_line": {"api_type": "csv_file", "file_path": "dataset/bus_line.csv", "table_name": "raw_bus_line"},
+    "mrt": {"api_type": "csv_file", "file_path": "dataset/mrt.csv", "table_name": "raw_mrt"},
     "planning_areas": {
         "api_type": "csv_file",
         "file_path": "dataset/planning_areas.csv",
-        "table_name": "planning_areas",
+        "table_name": "raw_planning_areas",
     },
     "transport_to_school": {
         "api_type": "csv_file",
         "file_path": "dataset/transport_to_school.csv",
-        "table_name": "transport_to_school",
+        "table_name": "raw_transport_to_school",
     },
 }
 
@@ -162,20 +174,28 @@ def drop_tables_before_ingest(
     if table_names is None:
         table_names = [cfg["table_name"] for cfg in SOURCES.values()]
 
-    db = pymysql.connect(
-        host=conn.host,
-        port=conn.port or 3306,
-        user=conn.login,
-        password=conn.password,
-        database=conn.schema or "airflow_data",
+    # db = pymysql.connect(
+    #     host=conn.host,
+    #     port=conn.port or 3306,
+    #     user=conn.login,
+    #     password=conn.password,
+    #     database=conn.schema or "airflow_data",
+    # )
+
+    db = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
     )
 
-    with db.cursor() as cursor:
+    # with db.cursor() as cursor:
+    #     for table_name in table_names:
+    #         cursor.execute(f"DROP TABLE IF EXISTS `{table_name}`")
+
+    with db.connect() as connection:
         for table_name in table_names:
-            cursor.execute(f"DROP TABLE IF EXISTS `{table_name}`")
+            connection.execute(f"DROP TABLE IF EXISTS `{table_name}`")
+
     db.commit()
     db.close()
-
 
 def _parse_json_to_df(data):
     if isinstance(data, list):
@@ -275,25 +295,46 @@ def load_to_mysql(
 
     def _sanitize(val):
         return None if pd.isna(val) else val
+    
+    # db = pymysql.connect(
+    #     host=conn.host,
+    #     port=conn.port or 3306,
+    #     user=conn.login,
+    #     password=conn.password,
+    #     database=conn.schema or "airflow_data",
+    # )
 
-    db = pymysql.connect(
-        host=conn.host,
-        port=conn.port or 3306,
-        user=conn.login,
-        password=conn.password,
-        database=conn.schema or "airflow_data",
+    db = create_engine(
+        f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
     )
 
-    with db.cursor() as cursor:
-        cursor.execute(f"DROP TABLE IF EXISTS `{table_name}`")
+    # with db.cursor() as cursor:
+    #     for table_name in table_names:
+    #         cursor.execute(f"DROP TABLE IF EXISTS `{table_name}`")
+
+    # with db.cursor() as cursor:
+    #     cursor.execute(f"DROP TABLE IF EXISTS `{table_name}`")
+    #     cols = ", ".join(f"`{c}` TEXT" for c in df.columns)
+    #     cursor.execute(f"CREATE TABLE `{table_name}` ({cols})")
+    #     cols_str = ", ".join(f"`{c}`" for c in df.columns)
+    #     vals = ", ".join(["%s"] * len(df.columns))
+    #     rows_data = [tuple(_sanitize(v) for v in row) for _, row in df.iterrows()]
+    #     cursor.executemany(
+    #         f"INSERT INTO `{table_name}` ({cols_str}) VALUES ({vals})",
+    #         rows_data,
+    #     )
+
+    with db.connect() as connection:
+        connection.execute(f"DROP TABLE IF EXISTS `{table_name}`")
         cols = ", ".join(f"`{c}` TEXT" for c in df.columns)
-        cursor.execute(f"CREATE TABLE `{table_name}` ({cols})")
+        connection.execute(f"CREATE TABLE `{table_name}` ({cols})")
         cols_str = ", ".join(f"`{c}`" for c in df.columns)
         vals = ", ".join(["%s"] * len(df.columns))
         rows_data = [tuple(_sanitize(v) for v in row) for _, row in df.iterrows()]
-        cursor.executemany(
+        connection.executemany(
             f"INSERT INTO `{table_name}` ({cols_str}) VALUES ({vals})",
             rows_data,
         )
+
     db.commit()
     db.close()
