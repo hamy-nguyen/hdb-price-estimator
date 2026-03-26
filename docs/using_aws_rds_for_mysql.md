@@ -8,6 +8,10 @@ Ensure that you have the `.env` file with the environment variables:
 
 ```python
 import os
+from dotenv import load_dotenv
+
+_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_ROOT / ".env")
 
 host = os.environ["AWS_RDS_HOST"]
 port = os.environ["AWS_RDS_PORT"]
