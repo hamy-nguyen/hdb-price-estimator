@@ -54,11 +54,14 @@ df = pd.read_sql(
 2. Select MySQL
 3. Fill in the following information (the rest as defaults):
     ```
-    Connection Name: rds-mysql (or anything really)
-    Server Address: hdb-price-estimator.c7so2qk8smgw.ap-southeast-1.rds.amazonaws.com
+    Connection Name: hdbpriceestimator (or anything really)
+    Server Address: hdbpriceestimator.c7so2qk8smgw.ap-southeast-1.rds.amazonaws.com
     Port: 3306
-    Database: hdb-price-estimator
+    Database: hdbpriceestimator_db
     Username: admin
     Password mode: Ask on connect
     ```
 4. Test/Save Connection and fill the password (found in the `.env` file)
+
+## Important Note
+Unfortunately, we cannot use NUS' wifi to connect to the database. If you are on campus, you need to use your mobile data.

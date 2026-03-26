@@ -380,8 +380,12 @@ if __name__ == "__main__":
     engine = create_engine(
         f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{db}"
     )
+    ingest_planning_areas()
     planning_areas_df = pd.read_sql(
         "SELECT * FROM raw_onemap_planning_areas",
         con=engine
     )
+    ingest_transport_to_school(planning_areas_df)
+    ingest_transport_to_work(planning_areas_df)
+    ingest_tenancy(planning_areas_df)
     ingest_dwelling_household(planning_areas_df)
