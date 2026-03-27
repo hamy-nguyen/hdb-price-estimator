@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
 # Add project root so we can import from tourist_attraction_ingest
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -98,5 +98,5 @@ with DAG(
             },
         )
 
-        drop_tables_task >> extract_task >> load_task
+        _ = drop_tables_task >> extract_task >> load_task
         tasks[source_key] = (extract_task, load_task)

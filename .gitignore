@@ -1,4 +1,5 @@
 venv/
+.venv/
 .env
 
 airflow/*
@@ -8,4 +9,10 @@ airflow/dags/*
 
 logs/
 airflow.db
+airflow.db-shm
+airflow.db-wal
+airflow.cfg
+simple_auth_manager_passwords.json.generated
 *.pid
+__pycache__/
+pyrightconfig.json

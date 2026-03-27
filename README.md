@@ -1,91 +1,150 @@
 # hdb-price-estimator
+
 Smart HDB Fair Value Estimation Platform: An end-to-end ML system for predicting Singapore HDB resale prices using engineered features from transaction data, geospatial context, and demographics.
 
-## Ingesting Tourist Attractions Data into MySQL
-
-The project includes an Airflow DAG that extracts tourist attractions from the data.gov.sg API and loads them into MySQL.
+## Setup Guide
 
 ### Prerequisites
 
-- MySQL server running
-- Airflow installed and running (scheduler, dag-processor, api-server)
-- Dependencies: `pip install -r requirements.txt`
+- macOS with [Homebrew](https://brew.sh/)
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) package manager
 
-### Quick Start
+### 1. Create and Activate Virtual Environment
 
-1. **Set up MySQL** — Create database, user, and grant privileges. See [`tourist_attraction_ingest/MYSQL_SETUP.md`](tourist_attraction_ingest/MYSQL_SETUP.md) for step-by-step instructions.
+```bash
+uv venv
+source .venv/bin/activate
+```
 
-2. Configure Airflow Connection
+### 2. Install Dependencies
 
-In the Airflow UI: **Admin** → **Connections** → Add connection **mysql_default**:
+```bash
+uv pip install apache-airflow apache-airflow-providers-mysql apache-airflow-providers-fab pymysql pandas
+```
 
-| Field | Value |
-|-------|-------|
-| Connection Type | MySQL |
-| Host | localhost |
-| Schema | HDB_Data |
-| Login | airflow_user |
-| Password | your_password |
-| Port | 3306 |
+### 3. Set Up MySQL
 
+**Start MySQL:**
 
-3. **Install MySQL provider** (if MySQL type is missing):
-   ```bash
-   pip install apache-airflow-providers-mysql
-   ```
+```bash
+brew services start mysql
+```
 
-4. **Run the DAG** — Unpause `data_ingest` (DAG file: `airflow/dags/ingest_dag.py`) in the Airflow UI and trigger a run, or wait for the daily schedule.
+**Log in and create the database and user:**
 
-5. **Verify** — Check the `tourist_attractions` table:
-   ```bash
-   mysql -u airflow_user -p HDB_Data -e "SELECT COUNT(*) FROM tourist_attractions;"
-   ```
+```bash
+mysql -u root -p
+```
 
-## Tourist Attractions: Ingest Data into MySQL
+```sql
+CREATE DATABASE HDB_Data;
+CREATE USER 'bt4301'@'localhost' IDENTIFIED BY 'your_password';
+GRANT ALL PRIVILEGES ON HDB_Data.* TO 'bt4301'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
 
-This project includes an Airflow pipeline that extracts Singapore tourist attractions from the [data.gov.sg](https://data.gov.sg) API and loads them into MySQL.
+**Verify:**
 
-### Prerequisites
+```bash
+mysql -u bt4301 -p -e "SHOW DATABASES;"
+```
 
-- MySQL server running with a database and user (see `tourist_attraction_ingest/MYSQL_SETUP.md` for setup)
-- Apache Airflow installed and configured
-- Dependencies: `pip install -r requirements-tourist-ingest.txt`
+### 4. Configure Airflow
 
-### Quick Start
+Set `AIRFLOW_HOME` to the project directory (add to `~/.zshrc` for persistence):
 
-1. **Set up MySQL** (if not done): Create database `HDB_Data`, user `airflow_user`, and grant privileges. Full steps in `tourist_attraction_ingest/MYSQL_SETUP.md`.
+```bash
+export AIRFLOW_HOME=/Users/hamynguyen/Documents/School/Notes/BT4301/hdb-price-estimator
+```
 
-2. **Add Airflow connection**: Admin → Connections → Add  
-   - Connection Id: `mysql_default`  
-   - Connection Type: MySQL  
-   - Host: `localhost`  
-   - Schema: `HDB_Data`  
-   - Login: `airflow_user`  
-   - Password: *password*  
-   - Port: `3306`
+Run the database migration:
 
-3. **Start Airflow** (if not running):
-   ```bash
-   airflow scheduler &
-   airflow dag-processor &
-   airflow api-server
-   ```
+```bash
+airflow db migrate
+```
 
-4. **Run the DAG**: Open http://localhost:8081 → DAGs → `data_ingest` (`airflow/dags/ingest_dag.py`) → Unpause → Trigger Run.
+Edit `airflow.cfg` and update these settings:
 
-5. **Verify**: After the run completes, check the `tourist_attractions` table:
-   ```bash
-   mysql -u airflow_user -p HDB_Data -e "SELECT COUNT(*) FROM tourist_attractions;"
-   ```
+```ini
+[core]
+dags_folder = /Users/hamynguyen/Documents/School/Notes/BT4301/hdb-price-estimator/airflow/dags
+load_examples = False
+execution_api_server_url = http://localhost:8081/execution/
 
-### Pipeline Overview
+[api]
+base_url = http://localhost:8081
+port = 8081
 
-DAG id: **`data_ingest`** · file: **`airflow/dags/ingest_dag.py`**
+[dag_processor]
+dag_bundle_config_list = [{"name": "dags-folder", "classpath": "airflow.dag_processing.bundles.local.LocalDagBundle", "kwargs": {"path": "/Users/hamynguyen/Documents/School/Notes/BT4301/hdb-price-estimator/airflow/dags"}}]
+refresh_interval = 10
+```
 
-| Task pattern | Description |
-|--------------|-------------|
-| `drop_tables_before_ingest` | Drops all ingest target tables (full refresh) |
-| `extract_<source>` | Fetches data per source (API or local CSV); see `tourist_attraction_ingest/dag_helpers.py` → `SOURCES` |
-| `load_<source>` | Loads that source into MySQL |
+### 5. Start Airflow
 
-Schedule: daily (`@daily`).
+```bash
+source .venv/bin/activate
+export AIRFLOW_HOME=/Users/hamynguyen/Documents/School/Notes/BT4301/hdb-price-estimator
+airflow standalone
+```
+
+Login credentials are stored in `simple_auth_manager_passwords.json.generated` in the project root.
+
+### 6. Add MySQL Connection in Airflow
+
+In a separate terminal (with venv activated and `AIRFLOW_HOME` exported):
+
+```bash
+airflow connections add mysql_default \
+  --conn-uri "mysql://bt4301:your_password@localhost:3306/HDB_Data"
+```
+
+Replace `your_password` with the password you set in step 3.
+
+### 7. Run the DAG
+
+1. Open http://localhost:8081
+2. Toggle on the `data_ingest` DAG
+3. Click the play button to trigger a run
+
+Or via CLI:
+
+```bash
+airflow dags unpause data_ingest
+airflow dags trigger data_ingest
+```
+
+## Pipeline Overview
+
+DAG id: **`data_ingest`** · file: **`airflow/dags/ingest_dag.py`** · schedule: `@daily`
+
+| Task | Description |
+|------|-------------|
+| `drop_tables_before_ingest` | Drops all target tables (full refresh) |
+| `extract_<source>` | Fetches data per source (API or local CSV) |
+| `load_<source>` | Loads extracted data into MySQL |
+
+### Data Sources
+
+| Table | Source | Type |
+|-------|--------|------|
+| `tourist_attractions` | data.gov.sg API | poll-download |
+| `carpark_data` | data.gov.sg API | datastore_search |
+| `resale_flat_price` | data.gov.sg API | poll-download |
+| `hdb` | `dataset/hdb.csv` | Local CSV |
+| `poi` | `dataset/poi.csv` | Local CSV |
+| `bus_vol` | `dataset/bus_vol.csv` | Local CSV |
+| `bus_line` | `dataset/bus_line.csv` | Local CSV |
+| `mrt` | `dataset/mrt.csv` | Local CSV |
+
+Source configurations are defined in `tourist_attraction_ingest/dag_helpers.py` → `SOURCES`.
+
+## Troubleshooting
+
+- **MySQL won't start:** `pkill -f mysqld`, remove stale pid file from `/opt/homebrew/var/mysql/`, then `brew services start mysql`
+- **`airflow: command not found`:** Make sure the venv is activated: `source .venv/bin/activate`
+- **`conn_id mysql_default isn't defined`:** Add the connection per step 6
+- **`Access denied (using password: NO)`:** Delete and re-add the connection with the password in the URI
+- **Reset MySQL password:** `mysql -u root -p` then `ALTER USER 'bt4301'@'localhost' IDENTIFIED BY 'new_password';`

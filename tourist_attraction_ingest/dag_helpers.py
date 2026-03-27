@@ -65,11 +65,11 @@ SOURCES = {
 
 def extract_from_source(
     api_type: str,
-    dataset_id: str = None,
-    resource_id: str = None,
-    api_base: str = None,
-    file_path: str = None,
-    **kwargs
+    dataset_id: str | None = None,
+    resource_id: str | None = None,
+    api_base: str | None = None,
+    file_path: str | None = None,
+    **kwargs,
 ) -> str:
     """
     Extract data from API or local CSV. Returns JSON string for XCom.
@@ -79,6 +79,8 @@ def extract_from_source(
     session = _http_session()
 
     if api_type == "poll-download":
+        if not api_base or not dataset_id:
+            raise ValueError("poll-download requires api_base and dataset_id")
         url = f"{api_base.rstrip('/')}/{dataset_id}/poll-download"
         response = session.get(url, timeout=120)
         response.raise_for_status()
@@ -96,6 +98,8 @@ def extract_from_source(
             df = _flatten_geojson(df)
 
     elif api_type == "datastore_search":
+        if not api_base:
+            raise ValueError("datastore_search requires api_base")
         rid = resource_id or dataset_id
         page_limit = 5000
         url = f"{api_base.rstrip('/')}?resource_id={rid}&limit={page_limit}"
@@ -119,6 +123,8 @@ def extract_from_source(
         df = pd.DataFrame(all_records) if all_records else pd.DataFrame()
 
     elif api_type == "csv_file":
+        if not file_path:
+            raise ValueError("csv_file requires file_path")
         path = Path(file_path)
         if not path.is_absolute():
             path = _PROJECT_ROOT / path
@@ -129,13 +135,16 @@ def extract_from_source(
     else:
         raise ValueError(f"Unknown api_type: {api_type}")
 
-    return df.to_json(date_format="iso", orient="records")
+    result = df.to_json(date_format="iso", orient="records")
+    if result is None:
+        raise RuntimeError("DataFrame.to_json returned None unexpectedly")
+    return result
 
 
 def drop_tables_before_ingest(
     mysql_conn_id: str = "mysql_default",
-    table_names: list = None,
-    **kwargs
+    table_names: list[str] | None = None,
+    **kwargs,
 ) -> None:
     """
     Drop specified tables before ingesting. Use to clear existing data for full refresh.
@@ -146,17 +155,17 @@ def drop_tables_before_ingest(
     except ImportError:
         raise ImportError("Install pymysql: pip install pymysql")
 
-    from airflow.hooks.base import BaseHook
+    from airflow.sdk.bases.hook import BaseHook
     conn = BaseHook.get_connection(mysql_conn_id)
 
     if table_names is None:
         table_names = [cfg["table_name"] for cfg in SOURCES.values()]
 
     db = pymysql.connect(
-        host=conn.host,
+        host=conn.host or "localhost",
         port=conn.port or 3306,
-        user=conn.login,
-        password=conn.password,
+        user=conn.login or "",
+        password=conn.password or "",
         database=conn.schema or "airflow_data",
     )
 
@@ -222,7 +231,7 @@ def load_to_mysql(
 
     _log.info("load_to_mysql: table=%r rows=%s", table_name, len(df))
 
-    from airflow.hooks.base import BaseHook
+    from airflow.sdk.bases.hook import BaseHook
     conn = BaseHook.get_connection(mysql_conn_id)
 
     df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
@@ -233,10 +242,10 @@ def load_to_mysql(
         return None if pd.isna(val) else val
 
     db = pymysql.connect(
-        host=conn.host,
+        host=conn.host or "localhost",
         port=conn.port or 3306,
-        user=conn.login,
-        password=conn.password,
+        user=conn.login or "",
+        password=conn.password or "",
         database=conn.schema or "airflow_data",
     )
 
