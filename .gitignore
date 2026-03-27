@@ -16,3 +16,5 @@ simple_auth_manager_passwords.json.generated
 *.pid
 __pycache__/
 pyrightconfig.json
+
+__pycache__/
