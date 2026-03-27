@@ -41,35 +41,70 @@ SOURCES = {
         "api_type": "poll-download",
         "dataset_id": "d_0f2f47515425404e6c9d2a040dd87354",
         "api_base": "https://api-open.data.gov.sg/v1/public/api/datasets",
-        "table_name": "tourist_attractions",
+        "table_name": "raw_tourist_attractions",
     },
     "carpark_data": {
         "api_type": "datastore_search",
         "resource_id": "d_23f946fa557947f93a8043bbef41dd09",
         "api_base": "https://data.gov.sg/api/action/datastore_search",
-        "table_name": "carpark_data",
+        "table_name": "raw_carpark",
     },
     "resale_flat_price": {
         "api_type": "poll-download",
         "dataset_id": "d_8b84c4ee58e3cfc0ece0d773c8ca6abc",
         "api_base": "https://api-open.data.gov.sg/v1/public/api/datasets",
-        "table_name": "resale_flat_price",
+        "table_name": "raw_resale_flat_price",
     },
-    "hdb": {"api_type": "csv_file", "file_path": "dataset/hdb.csv", "table_name": "hdb"},
-    "poi": {"api_type": "csv_file", "file_path": "dataset/poi.csv", "table_name": "poi"},
-    "bus_vol": {"api_type": "csv_file", "file_path": "dataset/bus_vol.csv", "table_name": "bus_vol"},
-    "bus_line": {"api_type": "csv_file", "file_path": "dataset/bus_line.csv", "table_name": "bus_line"},
-    "mrt": {"api_type": "csv_file", "file_path": "dataset/mrt.csv", "table_name": "mrt"},
+    "hdb": {
+        "api_type": "csv_file", 
+        "file_path": "dataset/hdb.csv", 
+        "table_name": "raw_hdb"
+    },
+    "poi": {
+        "api_type": "csv_file",
+        "file_path": "dataset/poi.csv",
+        "table_name": "raw_poi"
+    },
+    "bus_vol": {
+        "api_type": "csv_file",
+        "file_path": "dataset/bus_vol.csv",
+        "table_name": "raw_bus_vol"
+    },
+    "bus_line": {
+        "api_type": "csv_file",
+        "file_path": "dataset/bus_line.csv",
+        "table_name": "raw_bus_line"
+    },
+    "mrt": {
+        "api_type": "csv_file",
+        "file_path": "dataset/mrt.csv",
+        "table_name": "raw_mrt"
+    },
     "planning_areas": {
         "api_type": "csv_file",
-        "file_path": "dataset/planning_areas.csv",
-        "table_name": "planning_areas",
+        "file_path": "dataset/onemap_planning_areas.csv",
+        "table_name": "raw_onemap_planning_areas",
     },
     "transport_to_school": {
         "api_type": "csv_file",
-        "file_path": "dataset/transport_to_school.csv",
-        "table_name": "transport_to_school",
+        "file_path": "dataset/onemap_transport_to_school.csv",
+        "table_name": "raw_onemap_transport_school",
     },
+    "transport_to_work": {
+        "api_type": "csv_file",
+        "file_path": "dataset/onemap_transport_to_work.csv",
+        "table_name": "raw_onemap_transport_work",
+    },
+    "tenancy": {
+        "api_type": "csv_file",
+        "file_path": "dataset/onemap_tenancy.csv",
+        "table_name": "raw_onemap_tenancy",
+    },
+    "dwelling": {
+        "api_type": "csv_file",
+        "file_path": "dataset/onemap_dwelling.csv",
+        "table_name": "raw_onemap_dwelling",
+    }
 }
 
 
@@ -223,7 +258,7 @@ def watermark_extracted_data(extract_task_id: str, **kwargs) -> str:
 
     df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-    df = df.fillna(value=None)
+    df = df.astype(object).where(pd.notna(df), None)
 
     # Drop existing _fp if re-processing, then recompute
     if dw.FINGERPRINT_COL in df.columns:
@@ -271,7 +306,7 @@ def load_to_mysql(
 
     df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-    df = df.fillna(value=None)
+    df = df.astype(object).where(pd.notna(df), None)
 
     def _sanitize(val):
         return None if pd.isna(val) else val
