@@ -1,5 +1,7 @@
 """
 Airflow DAG: Extract data from data.gov.sg APIs and local CSVs, load into MySQL.
+Uses upsert (INSERT ... ON DUPLICATE KEY UPDATE) to preserve data between runs
+and enable tamper detection via SHA-256 fingerprints.
 """
 
 import sys
@@ -8,17 +10,17 @@ from pathlib import Path
 from datetime import datetime, timedelta
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 
-# Add project root so we can import from tourist_attraction_ingest
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+# Add dags directory to path so we can import from helpers package
+_DAGS_DIR = Path(__file__).resolve().parent
+if str(_DAGS_DIR) not in sys.path:
+    sys.path.insert(0, str(_DAGS_DIR))
 
-from tourist_attraction_ingest.dag_helpers import (
+from helpers.dag_helpers import (
     extract_from_source,
-    load_to_mysql,
-    drop_tables_before_ingest,
+    upsert_to_mysql,
+    verify_data_integrity,
     watermark_extracted_data,
     SOURCES,
 )
@@ -39,10 +41,10 @@ with DAG(
     catchup=False,
     tags=["ingest", "mysql", "data_gov_sg"],
 ) as dag:
-    # Drop all tables first, then run extract/load for each source
-    drop_tables_task = PythonOperator(
-        task_id="drop_tables_before_ingest",
-        python_callable=drop_tables_before_ingest,
+    # Verify fingerprints on existing data (tamper detection)
+    verify_task = PythonOperator(
+        task_id="verify_data_integrity",
+        python_callable=verify_data_integrity,
         op_kwargs={"mysql_conn_id": MYSQL_CONN_ID},
     )
 
@@ -52,7 +54,7 @@ with DAG(
         table_name = config["table_name"]
         extract_task_id = f"extract_{source_key}"
         watermark_task_id = f"watermark_{source_key}"
-        load_task_id = f"load_{source_key}"
+        load_task_id = f"upsert_{source_key}"
 
         # Extract task
         if api_type == "poll-download":
@@ -89,17 +91,17 @@ with DAG(
                 },
             )
 
-        # Fingerprint / watermark (bt4301 row hashes → column `_fp`) before MySQL load
+        # Fingerprint / watermark (SHA-256 row hashes → column `_fp`)
         watermark_task = PythonOperator(
             task_id=watermark_task_id,
             python_callable=watermark_extracted_data,
             op_kwargs={"extract_task_id": extract_task_id},
         )
 
-        # Load task — pulls JSON from watermark task (includes `_fp`)
-        load_task = PythonOperator(
+        # Upsert task — insert new rows, update changed rows, preserve untouched rows
+        upsert_task = PythonOperator(
             task_id=load_task_id,
-            python_callable=load_to_mysql,
+            python_callable=upsert_to_mysql,
             op_kwargs={
                 "extract_task_id": watermark_task_id,
                 "table_name": table_name,
@@ -107,5 +109,5 @@ with DAG(
             },
         )
 
-        drop_tables_task >> extract_task >> watermark_task >> load_task
-        tasks[source_key] = (extract_task, watermark_task, load_task)
+        _ = verify_task >> extract_task >> watermark_task >> upsert_task
+        tasks[source_key] = (extract_task, watermark_task, upsert_task)
