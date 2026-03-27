@@ -6,6 +6,8 @@ airflow/*
 !airflow/dags/
 airflow/dags/*
 !airflow/dags/ingest_dag.py
+!airflow/dags/helpers/
+airflow/dags/helpers/__pycache__/
 
 logs/
 airflow.db
@@ -16,5 +18,3 @@ simple_auth_manager_passwords.json.generated
 *.pid
 __pycache__/
 pyrightconfig.json
-
-__pycache__/
