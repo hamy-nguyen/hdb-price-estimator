@@ -12,5 +12,3 @@ airflow/dags/*
 logs/
 airflow.db
 *.pid
-
-__pycache__/
