@@ -258,6 +258,7 @@ def watermark_extracted_data(extract_task_id: str, **kwargs) -> str:
 
     df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
+    # pandas 2.x: NaN -> None for JSON/MySQL; astype(object) avoids dtype issues
     df = df.astype(object).where(pd.notna(df), None)
 
     # Drop existing _fp if re-processing, then recompute
@@ -306,6 +307,7 @@ def load_to_mysql(
 
     df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
+    # pandas 2.x: NaN -> None before insert
     df = df.astype(object).where(pd.notna(df), None)
 
     def _sanitize(val):
