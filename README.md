@@ -13,7 +13,10 @@ hdb-price-estimator/
 │       └── data_watermarking.py   # SHA-256 row fingerprinting
 ├── notebooks/
 │   ├── datapipeline.ipynb         # ETL: transform raw tables → analytics tables
-│   └── eda_tourist_attractions.ipynb
+│   ├── eda_resale_flat_price.ipynb          # Data profiling, cleaning & EDA
+│   ├── eda_tourist_attractions.ipynb
+│   ├── feature_engineering_resale_flat_price.ipynb  # Feature engineering
+│   └── tourist_attraction_cleaning.ipynb
 ├── scripts/
 │   ├── extract_onemap.py          # Extract demographics from OneMap API
 │   └── search_coord.py            # Geocode HDB addresses via OneMap
