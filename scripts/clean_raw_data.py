@@ -1,9 +1,19 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Integer
 import pandas as pd
 
 def clean_onemap():
 
-    def clean_transport_school(df):
+    def clean_transport_school():
+        print("Cleaning transport to school data...")
+
+        engine_hdb = create_engine('mysql://airflow_user:password@localhost:3306/HDB_Data')
+
+        str_sql = f'''
+        SELECT * FROM raw_onemap_transport_school
+        '''
+
+        df = pd.read_sql(sql=str_sql, con=engine_hdb)
+
         # fill NAs as 0
         df = df.fillna(0)
 
@@ -16,15 +26,31 @@ def clean_onemap():
             'pvt_chartered_bus_van'
         ]
 
-        # convert transport_school_cols to numeric
-        df[transport_school_cols] = df[transport_school_cols].apply(pd.to_numeric)
+        dtype_dict = {col: Integer() for col in transport_school_cols}
 
-        print("Transport to school data after cleaning:")
-        print(df)
+        df.to_sql(
+            'clean_onemap_transport_school',
+            con=engine_hdb,
+            if_exists='replace',
+            index=False,
+            dtype=dtype_dict
+        )
 
-        return df
+        engine_hdb.dispose()
+        
+        print("Cleaned transport to school data saved to clean_onemap_transport_school.")
     
-    def clean_transport_work(df):
+    def clean_transport_work():
+        print("Cleaning transport to work data...")
+
+        engine_hdb = create_engine('mysql://airflow_user:password@localhost:3306/HDB_Data')
+
+        str_sql = f'''
+        SELECT * FROM raw_onemap_transport_work
+        '''
+        
+        df = pd.read_sql(sql=str_sql, con=engine_hdb)
+
         df = df.fillna(0)
 
         transport_work_cols = [
@@ -36,27 +62,59 @@ def clean_onemap():
             'pvt_chartered_bus_van'
         ]
 
-        df[transport_work_cols] = df[transport_work_cols].apply(pd.to_numeric)
+        dtype_dict = {col: Integer() for col in transport_work_cols}
 
-        print("Transport to work data after cleaning:")
-        print(df)
+        df.to_sql(
+            'clean_onemap_transport_work',
+            con=engine_hdb,
+            if_exists='replace',
+            index=False,
+            dtype=dtype_dict
+        )
 
-        return df
+        engine_hdb.dispose()
+        
+        print("Cleaned transport to work data saved to clean_onemap_transport_work.")
 
-    def clean_tenant(df):
+    def clean_tenant():
+        print("Cleaning tenancy data...")
+
+        engine_hdb = create_engine('mysql://airflow_user:password@localhost:3306/HDB_Data')
+
+        str_sql = f'''
+        SELECT * FROM raw_onemap_tenancy
+        '''
+
+        df = pd.read_sql(sql=str_sql, con=engine_hdb)
+
         df = df.fillna(0)
         
         tenant_cols = ['owner', 'tenant', 'others']
 
-        df[tenant_cols] = df[tenant_cols].apply(pd.to_numeric)
+        dtype_dict = {col: Integer() for col in tenant_cols}
 
-        print("Tenancy data after cleaning:")
-        print(df)
+        df.to_sql(
+            'clean_onemap_tenancy',
+            con=engine_hdb,
+            if_exists='replace',
+            index=False,
+            dtype=dtype_dict
+        )
 
-        return df
+        engine_hdb.dispose()
+        
+        print("Cleaned tenancy data saved to clean_onemap_tenancy.")
     
-    def clean_dwelling(df):
-        df = df.fillna(0)
+    def clean_dwelling():
+        print("Cleaning dwelling data...")
+
+        engine_hdb = create_engine('mysql://airflow_user:password@localhost:3306/HDB_Data')
+
+        str_sql = f'''
+        SELECT * FROM raw_onemap_dwelling
+        '''
+
+        df = pd.read_sql(sql=str_sql, con=engine_hdb)
 
         dwelling_cols = [
             'hdb_1_and_2_room_flats',
@@ -68,45 +126,24 @@ def clean_onemap():
             'others'
         ]
 
-        df[dwelling_cols] = df[dwelling_cols].apply(pd.to_numeric)
+        dtype_dict = {col: Integer() for col in dwelling_cols}
 
-        print("Dwelling data after cleaning:")
-        print(df)
+        df.to_sql(
+            'clean_onemap_dwelling',
+            con=engine_hdb,
+            if_exists='replace',
+            index=False,
+            dtype=dtype_dict
+        )
 
-        return df
+        engine_hdb.dispose()
         
+        print("Cleaned dwelling data saved to clean_onemap_dwelling.")
 
-    engine_hdb = create_engine('mysql://airflow_user:password@localhost:3306/HDB_Data')
-
-    str_sql = f'''
-    SELECT * FROM raw_onemap_transport_school
-    '''
-    df_transport_school = pd.read_sql(sql=str_sql, con=engine_hdb)
-
-    clean_transport_school(df_transport_school)
-
-    str_sql = f'''
-    SELECT * FROM raw_onemap_transport_work
-    '''
-    df_transport_work = pd.read_sql(sql=str_sql, con=engine_hdb)
-
-    clean_transport_work(df_transport_work)
-
-    str_sql = f'''
-    SELECT * FROM raw_onemap_dwelling
-    '''
-    df_dwelling = pd.read_sql(sql=str_sql, con=engine_hdb)
-
-    clean_dwelling(df_dwelling)
-
-    str_sql = f'''
-    SELECT * FROM raw_onemap_tenancy
-    '''
-    df_tenancy = pd.read_sql(sql=str_sql, con=engine_hdb)
-
-    clean_tenant(df_tenancy)
-
-    engine_hdb.dispose()
+    clean_transport_school()
+    clean_transport_work()
+    clean_tenant()
+    clean_dwelling()
 
 if __name__ == "__main__":
     clean_onemap()
