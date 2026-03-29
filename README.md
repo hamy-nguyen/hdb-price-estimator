@@ -15,6 +15,7 @@ hdb-price-estimator/
 │   ├── datapipeline.ipynb         # ETL: transform raw tables → analytics tables
 │   ├── eda_resale_flat_price.ipynb          # Data profiling, cleaning & EDA
 │   ├── eda_tourist_attractions.ipynb
+│   ├── eda_places_of_interest.ipynb
 │   ├── feature_engineering_resale_flat_price.ipynb  # Feature engineering
 │   └── tourist_attraction_cleaning.ipynb
 ├── scripts/
