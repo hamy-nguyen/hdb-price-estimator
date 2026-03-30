@@ -2,6 +2,7 @@ import pandas as pd
 import hashlib
 import json
 from decimal import Decimal
+from datetime import datetime, date
 
 
 
@@ -19,6 +20,8 @@ def normalize_value(v):
         return format(v, ".15g")   # deterministic float rendering
     if isinstance(v, Decimal):
         return str(v)
+    if isinstance(v, (pd.Timestamp, datetime, date)):
+            return v.isoformat()
     return v
 
 

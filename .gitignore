@@ -9,6 +9,7 @@ airflow/*
 !airflow/dags/
 airflow/dags/*
 !airflow/dags/ingest_dag.py
+!airflow/dags/transform_dag.py
 !airflow/dags/helpers/
 
 logs/
