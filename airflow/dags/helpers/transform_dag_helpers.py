@@ -877,7 +877,6 @@ def transform_resale_prices(mysql_conn_id):
 
     # compute _fp column again (part by part to avoid memory issues)
     logging.info("Recomputing fingerprint column after all transformations and joins...")
-    # resale = dw.add_fingerprint_column(resale)
 
     chunk_size = 20000
     first = True
