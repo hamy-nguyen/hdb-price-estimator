@@ -80,6 +80,7 @@ PRIMARY_KEYS = {
     },
     "raw_hdb": {"blk_no": 10, "street": 40},
     "raw_poi": {"place_id": 40},
+    "raw_bus_stops": {"busstopcode": 5},
     "raw_bus_vol": {"month": 10, "day": 5, "hour": 5, "stop_id": 10},
     "raw_bus_line": {"line": 10, "direction": 5, "sequence": 10},
     "raw_mrt": {"name": 50, "line": 10},
@@ -119,6 +120,11 @@ SOURCES = {
         "api_type": "csv_file",
         "file_path": "dataset/raw/poi.csv",
         "table_name": "raw_poi"
+    },
+    "bus_stops": {
+        "api_type": "csv_file",
+        "file_path": "dataset/raw/bus_stops.csv",
+        "table_name": "raw_bus_stops"
     },
     "bus_vol": {
         "api_type": "csv_file",
