@@ -137,6 +137,13 @@ export AIRFLOW_HOME=/path/to/hdb-price-estimator
 airflow standalone
 ```
 
+```bash
+export AIRFLOW_HOME=/root/hdb-price-estimator/airflow
+airflow scheduler &
+airflow dag-processor &
+airflow api-server
+```
+
 Login credentials are printed on first startup and stored in `simple_auth_manager_passwords.json.generated`.
 
 ### 6. Add MySQL Connection in Airflow

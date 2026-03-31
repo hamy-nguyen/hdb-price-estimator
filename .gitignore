@@ -20,5 +20,6 @@ airflow.cfg
 simple_auth_manager_passwords.json.generated
 *.pid
 pyrightconfig.json
+.vscode/settings.json
 
 dataset/processed/

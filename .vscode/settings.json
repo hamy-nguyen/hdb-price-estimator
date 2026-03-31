@@ -12,7 +12,7 @@
       "driver": "MySQL",
       "name": "ingest_data",
       "database": "HDB_Data",
-      "username": "bt4301"
+      "username": "airflow_user"
     }
   ],
   "python-envs.pythonProjects": [],
