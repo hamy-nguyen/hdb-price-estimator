@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta
-from airflow.sdk import dag, task
+try:
+    from airflow.sdk import dag, task          # Airflow 3.x
+except ImportError:
+    from airflow.decorators import dag, task  # Airflow 2.x
 from helpers.transform_dag_helpers import (
     joinable_resale_prices,
     join_hdb,

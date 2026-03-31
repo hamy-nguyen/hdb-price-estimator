@@ -250,7 +250,10 @@ def extract_from_source(
 def _get_mysql_connection(mysql_conn_id: str):
     """Get a pymysql connection using Airflow connection details."""
     import pymysql
-    from airflow.sdk.bases.hook import BaseHook
+    try:
+        from airflow.sdk.bases.hook import BaseHook   # Airflow 3.x (future)
+    except ImportError:
+        from airflow.hooks.base import BaseHook       # Airflow 3.0.0 / 2.x
     conn = BaseHook.get_connection(mysql_conn_id)
     return pymysql.connect(
         host=conn.host or "localhost",
