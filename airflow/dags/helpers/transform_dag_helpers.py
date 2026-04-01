@@ -4,7 +4,7 @@ from sklearn.neighbors import BallTree
 import numpy as np
 import re
 from . import data_watermarking as dw
-from airflow.hooks.base import BaseHook
+from airflow.sdk.bases.hook import BaseHook
 import logging
 import gc
 
@@ -237,7 +237,7 @@ def join_poi(mysql_conn_id):
             continue
 
         mask = poi[valid_cols].apply(
-            lambda col: col.astype(str).str.upper() == "TRUE"
+            lambda col: col == 1
         ).any(axis=1)
 
         cat_pois = poi.loc[mask, ["lat", "lng"]]
@@ -311,11 +311,6 @@ def join_onemap(mysql_conn_id):
     transport_school = pd.read_sql(sql=str_sql, con=engine_hdb)
 
     str_sql = f'''
-    SELECT * FROM clean_onemap_transport_work
-    '''
-    transport_work = pd.read_sql(sql=str_sql, con=engine_hdb)
-
-    str_sql = f'''
     SELECT * FROM clean_onemap_tenancy
     '''
     tenancy = pd.read_sql(sql=str_sql, con=engine_hdb)
@@ -342,37 +337,14 @@ def join_onemap(mysql_conn_id):
     transport_school['transport_school_pct_mrt'] = transport_school['mrt'] / denom
     transport_school['transport_school_pct_mrt_bus'] = transport_school['mrt_bus'] / denom
     transport_school['transport_school_pct_car'] = transport_school['car'] / denom
-    transport_school['transport_school_pct_mrt_lrt_only'] = transport_school['mrt_lrt_only'] / denom
-    transport_school['transport_school_pct_mrt_lrt_and_bus'] = transport_school['mrt_lrt_and_bus'] / denom
     transport_school.fillna(0, inplace=True)
     transport_school['onemap_join_year'] = pd.to_numeric(transport_school['year'])
     transport_school_new_cols = [
-        'transport_school_pct_bus', 'transport_school_pct_mrt', 'transport_school_pct_mrt_bus',
-        'transport_school_pct_car', 'transport_school_pct_mrt_lrt_only', 'transport_school_pct_mrt_lrt_and_bus'
+        'transport_school_pct_bus', 'transport_school_pct_mrt',
+        'transport_school_pct_mrt_bus', 'transport_school_pct_car'
     ]
     transport_school = (
         transport_school[["planning_area", "onemap_join_year"] + transport_school_new_cols]
-        .groupby(["planning_area", "onemap_join_year"], as_index=False)
-        .mean()
-    )
-
-    # Process transport_work
-    transport_work['total_transport_work'] = transport_work[transport_cols].sum(axis=1)
-    denom = transport_work['total_transport_work'].replace(0, np.nan)
-    transport_work['transport_work_pct_bus'] = transport_work['bus'] / denom
-    transport_work['transport_work_pct_mrt'] = transport_work['mrt'] / denom
-    transport_work['transport_work_pct_mrt_bus'] = transport_work['mrt_bus'] / denom
-    transport_work['transport_work_pct_car'] = transport_work['car'] / denom
-    transport_work['transport_work_pct_mrt_lrt_only'] = transport_work['mrt_lrt_only'] / denom
-    transport_work['transport_work_pct_mrt_lrt_and_bus'] = transport_work['mrt_lrt_and_bus'] / denom
-    transport_work.fillna(0, inplace=True)
-    transport_work['onemap_join_year'] = pd.to_numeric(transport_work['year'])
-    transport_work_new_cols = [
-        'transport_work_pct_bus', 'transport_work_pct_mrt', 'transport_work_pct_mrt_bus',
-        'transport_work_pct_car', 'transport_work_pct_mrt_lrt_only', 'transport_work_pct_mrt_lrt_and_bus'
-    ]
-    transport_work = (
-        transport_work[["planning_area", "onemap_join_year"] + transport_work_new_cols]
         .groupby(["planning_area", "onemap_join_year"], as_index=False)
         .mean()
     )
@@ -382,10 +354,9 @@ def join_onemap(mysql_conn_id):
     tenancy['total_tenancy'] = tenancy[tenancy_cols_agg].sum(axis=1)
     denom = tenancy['total_tenancy'].replace(0, np.nan)
     tenancy['tenancy_pct_owner'] = tenancy['owner'] / denom
-    tenancy['tenancy_pct_tenant'] = tenancy['tenant'] / denom
     tenancy.fillna(0, inplace=True)
     tenancy['onemap_join_year'] = pd.to_numeric(tenancy['year'])
-    tenancy_new_cols = ['tenancy_pct_owner', 'tenancy_pct_tenant']
+    tenancy_new_cols = ['tenancy_pct_owner']
     tenancy = (
         tenancy[["planning_area", "onemap_join_year"] + tenancy_new_cols]
         .groupby(["planning_area", "onemap_join_year"], as_index=False)
@@ -441,12 +412,6 @@ def join_onemap(mysql_conn_id):
         )
         
         resale_chunk = resale_chunk.merge(
-            transport_work,
-            on=['planning_area', 'onemap_join_year'],
-            how="left"
-        )
-        
-        resale_chunk = resale_chunk.merge(
             tenancy,
             on=['planning_area', 'onemap_join_year'],
             how="left"
@@ -477,7 +442,7 @@ def join_onemap(mysql_conn_id):
     _swap_temp_into_target(engine_hdb)
     logger.info(f"OneMap join rows in={rows_in}, rows out={rows_out}")
 
-    del transport_school, transport_work, tenancy, dwelling
+    del transport_school, tenancy, dwelling
     gc.collect()
 
 def join_car_park(mysql_conn_id):
@@ -735,12 +700,12 @@ def transform_resale_prices(mysql_conn_id):
         'lng': 'longitude'
     })
 
-    # CHECK: compute building_age
+    # compute building_age
     resale['year'] = pd.to_numeric(resale['year'])
     resale['year_completed'] = pd.to_numeric(resale['year_completed'])
     resale['building_age'] = resale['year'] - resale['year_completed']
 
-    # CHECK: Quarter and month index
+    # Quarter and month index
     resale['quarter'] = resale['month_and_year'].dt.quarter
 
     min_month = resale["month_and_year"].min()
@@ -804,6 +769,9 @@ def transform_resale_prices(mysql_conn_id):
 
     # Storey relative to building max — how high up within its building
     resale["storey_ratio"] = resale["storey_mid"] / resale["max_floor_lvl"]
+
+    # drop columns that are no longer needed for modeling
+    resale.drop(columns=["storey_range", "remaining_lease", "nearest_carpark"], inplace=True)
 
     # compute _fp column again (part by part to avoid memory issues)
     logging.info("Recomputing fingerprint column after all transformations and joins...")

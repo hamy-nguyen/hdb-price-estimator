@@ -14,12 +14,10 @@ import gc
 import logging
 
 import pandas as pd
-import re
-import numpy as np
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, String, Integer, Float, DateTime
 from pyproj import Transformer
 
-from airflow.hooks.base import BaseHook
+from airflow.sdk.bases.hook import BaseHook
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +38,19 @@ def _read(sql: str, engine) -> pd.DataFrame:
 
 def _write(df: pd.DataFrame, table: str, engine) -> None:
     """Write a DataFrame to MySQL, replacing any existing table."""
-    df.to_sql(table, con=engine, if_exists="replace", index=False)
+    dtype_map = {}
+    for col, dtype in df.dtypes.items():
+        if pd.api.types.is_integer_dtype(dtype):
+            dtype_map[col] = Integer()
+        elif pd.api.types.is_float_dtype(dtype):
+            dtype_map[col] = Float()
+        elif pd.api.types.is_bool_dtype(dtype):
+            dtype_map[col] = Integer()
+        elif pd.api.types.is_datetime64_any_dtype(dtype):
+            dtype_map[col] = DateTime()
+        else:
+            dtype_map[col] = String(255)
+    df.to_sql(table, con=engine, if_exists="replace", index=False, dtype=dtype_map)
     logger.info("Wrote %d rows to %s", len(df), table)
 
 # ---------------------------------------------------------------------------
@@ -147,6 +157,20 @@ def clean_poi(mysql_conn_id: str) -> None:
     # Validation: ratings should be between 0 and 5, user ratings total should be non-negative
     poi = poi[poi["rating"].between(0, 5)]
     poi = poi[poi["user_ratings_total"] >= 0]
+
+    # convert boolean to 1/0
+    category_cols = [col for col in poi.columns if col not in [
+        'place_id', 'name', 'lat', 'lng', 'rating', 'user_ratings_total',
+        'compound_code', 'planning_area', 'subzone_no', 'subzone_n', 'subzone_c',
+        'pln_area_n', 'pln_area_c', 'region_n', 'region_c', '_fp'
+    ]]
+
+    for col in category_cols:
+        poi[col] = (
+            poi[col]
+            .map({"True": 1, "False": 0})
+            .astype(int)
+        )
 
     _write(poi, "clean_poi", engine)
 
