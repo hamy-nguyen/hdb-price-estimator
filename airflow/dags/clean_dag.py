@@ -21,18 +21,14 @@ if str(_DAGS_DIR) not in sys.path:
     sys.path.insert(0, str(_DAGS_DIR))
 
 from helpers.clean_dag_helpers import (
-    clean_tourist_attractions,
-    clean_carpark,
-    clean_resale_flat_price,
     clean_hdb,
-    clean_poi,
-    clean_bus_vol,
-    clean_bus_line,
     clean_mrt,
-    clean_onemap_transport_school,
-    clean_onemap_transport_work,
-    clean_onemap_tenancy,
-    clean_onemap_dwelling,
+    clean_poi,
+    clean_onemap,
+    clean_carpark,
+    clean_bus,
+    clean_tourist_attractions,
+    clean_resale_flat_price
 )
 
 DAG_ID = "data_clean"
@@ -46,18 +42,14 @@ DEFAULT_ARGS = {
 # Map each cleaning function to a human-readable task id.
 # All tasks run in parallel since each cleans an independent table.
 CLEAN_TASKS = {
-    "tourist_attractions": clean_tourist_attractions,
-    "carpark": clean_carpark,
-    "resale_flat_price": clean_resale_flat_price,
     "hdb": clean_hdb,
-    "poi": clean_poi,
-    "bus_vol": clean_bus_vol,
-    "bus_line": clean_bus_line,
     "mrt": clean_mrt,
-    "onemap_transport_school": clean_onemap_transport_school,
-    "onemap_transport_work": clean_onemap_transport_work,
-    "onemap_tenancy": clean_onemap_tenancy,
-    "onemap_dwelling": clean_onemap_dwelling,
+    "poi": clean_poi,
+    "onemap": clean_onemap,
+    "carpark": clean_carpark,
+    "bus": clean_bus,
+    "tourist_attractions": clean_tourist_attractions,
+    "resale_flat_price": clean_resale_flat_price
 }
 
 with DAG(
