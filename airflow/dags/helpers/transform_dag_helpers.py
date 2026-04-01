@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, String, Integer, Float, DateTime
 import pandas as pd
 from sklearn.neighbors import BallTree
 import numpy as np
@@ -32,6 +32,22 @@ def get_mysql_engine(mysql_conn_id):
         f"mysql+pymysql://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}"
     )
 
+def get_dtype_mapping(df):
+    dtype_map = {}
+    for col, dtype in df.dtypes.items():
+        if pd.api.types.is_integer_dtype(dtype):
+            dtype_map[col] = Integer()
+        elif pd.api.types.is_float_dtype(dtype):
+            dtype_map[col] = Float()
+        elif pd.api.types.is_bool_dtype(dtype):
+            dtype_map[col] = Integer()
+        elif pd.api.types.is_datetime64_any_dtype(dtype):
+            dtype_map[col] = DateTime()
+        else:
+            dtype_map[col] = String(255)
+
+    return dtype_map
+
 def joinable_resale_prices(mysql_conn_id):
     logger.info("Preparing joinable resale flat prices data...")
 
@@ -62,7 +78,8 @@ def joinable_resale_prices(mysql_conn_id):
         'transform_resale_flat_price',
         con=engine_hdb,
         if_exists='replace',
-        index=False
+        index=False,
+        dtype=get_dtype_mapping(resale)
     )
 
     del resale
@@ -122,7 +139,8 @@ def join_hdb(mysql_conn_id):
             if_exists='append',
             index=False,
             method='multi',
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(chunk)
         )
 
         chunk_num += 1
@@ -191,7 +209,8 @@ def join_mrt(mysql_conn_id):
             if_exists='append',
             index=False,
             method='multi',
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(resale_chunk)
         )
 
         del block_coords, resale_chunk
@@ -288,7 +307,8 @@ def join_poi(mysql_conn_id):
             if_exists='append',
             index=False,
             method='multi',
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(resale_chunk)
         )
 
         del block_coords, resale_chunk
@@ -433,7 +453,8 @@ def join_onemap(mysql_conn_id):
             if_exists='append',
             index=False,
             method='multi',
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(resale_chunk)
         )
 
         del resale_chunk
@@ -535,7 +556,8 @@ def join_car_park(mysql_conn_id):
             if_exists='append',
             index=False,
             method='multi',
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(resale_chunk)
         )
 
         del block_coords, resale_chunk
@@ -657,7 +679,8 @@ def join_bus(mysql_conn_id):
             if_exists='append',
             index=False,
             method='multi',
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(resale_chunk)
         )
 
         del block_coords, resale_chunk
@@ -675,12 +698,58 @@ def join_tourist_attractions(mysql_conn_id):
     engine_hdb = get_mysql_engine(mysql_conn_id)
 
     str_sql = f'''
-    SELECT * FROM transform_resale_flat_price 
+    SELECT 
+        lat, lng
+    FROM clean_tourist_attractions
     '''
+    tourist_attractions_coords = pd.read_sql(sql=str_sql, con=engine_hdb)
+    tourist_attractions_rad = np.radians(tourist_attractions_coords[["lat", "lng"]].to_numpy())
+    tourist_attractions_tree = BallTree(tourist_attractions_rad, metric="haversine")
 
-    resale = pd.read_sql(sql=str_sql, con=engine_hdb)
+    chunk_size = 20000
+    chunk_num = 0
+    rows_in = 0
+    rows_out = 0
 
-    del resale
+    _reset_temp_table(engine_hdb)
+
+    for resale_chunk in pd.read_sql(f'SELECT * FROM {TARGET_TABLE}', con=engine_hdb, chunksize=chunk_size):
+        logger.info(f"Processing tourist attractions data chunk {chunk_num} ({len(resale_chunk)} rows)...")
+        chunk_num += 1
+        rows_in += len(resale_chunk)
+
+        block_coords = resale_chunk[["full_address", "lat", "lng"]].drop_duplicates(subset=["full_address"]).copy()
+        block_rad = np.radians(block_coords[["lat", "lng"]].to_numpy())
+
+        dist_rad, _ = tourist_attractions_tree.query(block_rad, k=1)
+        block_coords["dist_to_nearest_tourist_attraction_m"] = np.asarray(dist_rad).ravel() * R_EARTH_M
+
+        tourist_new_cols = ["dist_to_nearest_tourist_attraction_m"]
+
+        resale_chunk = resale_chunk.merge(
+            block_coords[["full_address"] + tourist_new_cols],
+            on="full_address",
+            how="left"
+        )
+        rows_out += len(resale_chunk)
+
+        resale_chunk.to_sql(
+            TEMP_TABLE,
+            con=engine_hdb,
+            if_exists='append',
+            index=False,
+            method='multi',
+            chunksize=5000,
+            dtype=get_dtype_mapping(resale_chunk)
+        )
+
+        del block_coords, resale_chunk
+        gc.collect()
+
+    _swap_temp_into_target(engine_hdb)
+    logger.info(f"Tourist attraction join rows in={rows_in}, rows out={rows_out}")
+
+    del tourist_attractions_coords, tourist_attractions_rad, tourist_attractions_tree
     gc.collect()
 
 def transform_resale_prices(mysql_conn_id):
@@ -789,7 +858,8 @@ def transform_resale_prices(mysql_conn_id):
             if_exists="replace" if first else "append",
             index=False,
             method="multi",
-            chunksize=1000
+            chunksize=5000,
+            dtype=get_dtype_mapping(chunk)
         )
 
         first = False
