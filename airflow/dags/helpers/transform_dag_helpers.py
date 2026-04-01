@@ -808,6 +808,10 @@ def transform_resale_prices(mysql_conn_id):
         how="left"
     )
 
+    # remove values where town_price_trend_6m is NaN (i.e. the first 6 months of data for each town)
+    # to avoid leakage from the target variable's own month
+    resale = resale.dropna(subset=["town_price_trend_6m"])
+
     # Log-transformed target
     resale["log_resale_price"] = np.log1p(resale["resale_price"])
 
