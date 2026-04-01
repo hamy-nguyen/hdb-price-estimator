@@ -38,6 +38,7 @@ def _read(sql: str, engine) -> pd.DataFrame:
 
 def _write(df: pd.DataFrame, table: str, engine) -> None:
     """Write a DataFrame to MySQL, replacing any existing table."""
+    # Build explicit dtype map so SQLAlchemy quotes column names in CREATE TABLE
     dtype_map = {}
     for col, dtype in df.dtypes.items():
         if pd.api.types.is_integer_dtype(dtype):
