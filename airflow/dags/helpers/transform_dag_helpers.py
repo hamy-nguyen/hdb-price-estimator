@@ -486,27 +486,32 @@ def join_car_park(mysql_conn_id):
 
     # Prepare car park features upfront
     car_park['has_free_parking'] = (car_park['free_parking'] != "NO").astype(int)
-    car_park['is_free_daytime'] = car_park['free_parking'].str.contains("7AM-10.30PM", na=False).astype(int)
-    car_park['is_free_halfday'] = car_park['free_parking'].str.contains("1PM-10.30PM", na=False).astype(int)
+    # car_park['is_free_daytime'] = car_park['free_parking'].str.contains("7AM-10.30PM", na=False).astype(int)
+    # car_park['is_free_halfday'] = car_park['free_parking'].str.contains("1PM-10.30PM", na=False).astype(int)
     car_park['has_short_term_parking'] = (car_park['short_term_parking'] != "NO").astype(int)
     car_park['has_night_parking'] = car_park['night_parking'].map({'YES': 1, 'NO': 0})
-    car_park['is_visitor_friendly'] = (
-        (car_park['has_short_term_parking'] == 1) &
-        (car_park['has_free_parking'] == 1) &
-        (car_park['has_night_parking'] == 1)
-    ).astype(int)
-    car_park['has_height_restriction'] = (car_park['gantry_height'] > 0).astype(int)
-    car_park['has_big_vehicle_restriction'] = (
-        (car_park['has_height_restriction'] == 1) &
-        (car_park['gantry_height'] < 2.15)
-    ).astype(int)
+    # car_park['is_visitor_friendly'] = (
+    #     (car_park['has_short_term_parking'] == 1) &
+    #     (car_park['has_free_parking'] == 1) &
+    #     (car_park['has_night_parking'] == 1)
+    # ).astype(int)
+    # car_park['has_height_restriction'] = (car_park['gantry_height'] > 0).astype(int)
+    # car_park['has_big_vehicle_restriction'] = (
+    #     (car_park['has_height_restriction'] == 1) &
+    #     (car_park['gantry_height'] < 2.15)
+    # ).astype(int)
     car_park['has_car_park_basement'] = car_park['car_park_basement'].map({'Y': 1, 'N': 0})
+
+    # carpark_new_cols = [
+    #     "gantry_height", "car_park_decks", "has_free_parking",
+    #     "is_free_daytime", "is_free_halfday", "has_short_term_parking",
+    #     "has_night_parking", "is_visitor_friendly", "has_height_restriction",
+    #     "has_big_vehicle_restriction", "has_car_park_basement"
+    # ]
 
     carpark_new_cols = [
         "gantry_height", "car_park_decks", "has_free_parking",
-        "is_free_daytime", "is_free_halfday", "has_short_term_parking",
-        "has_night_parking", "is_visitor_friendly", "has_height_restriction",
-        "has_big_vehicle_restriction", "has_car_park_basement"
+        "has_short_term_parking", "has_night_parking", "has_car_park_basement"
     ]
 
     chunk_size = 20000
