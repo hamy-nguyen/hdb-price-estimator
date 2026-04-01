@@ -14,9 +14,9 @@ import gc
 import logging
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, String, Integer, Float, DateTime
 
-from airflow.hooks.base import BaseHook
+from airflow.sdk.bases.hook import BaseHook
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,20 @@ def _read(sql: str, engine) -> pd.DataFrame:
 
 def _write(df: pd.DataFrame, table: str, engine) -> None:
     """Write a DataFrame to MySQL, replacing any existing table."""
-    df.to_sql(table, con=engine, if_exists="replace", index=False)
+    # Build explicit dtype map so SQLAlchemy quotes column names in CREATE TABLE
+    dtype_map = {}
+    for col, dtype in df.dtypes.items():
+        if pd.api.types.is_integer_dtype(dtype):
+            dtype_map[col] = Integer()
+        elif pd.api.types.is_float_dtype(dtype):
+            dtype_map[col] = Float()
+        elif pd.api.types.is_bool_dtype(dtype):
+            dtype_map[col] = Integer()
+        elif pd.api.types.is_datetime64_any_dtype(dtype):
+            dtype_map[col] = DateTime()
+        else:
+            dtype_map[col] = String(255)
+    df.to_sql(table, con=engine, if_exists="replace", index=False, dtype=dtype_map)
     logger.info("Wrote %d rows to %s", len(df), table)
 
 
@@ -381,6 +394,12 @@ def clean_poi(mysql_conn_id: str) -> None:
         lambda row: ','.join(row.index[row].tolist()) if row.any() else 'other',
         axis=1
     )
+
+    # Drop raw boolean columns (now rolled up into group categories)
+    # Avoids MySQL reserved word conflicts (e.g. "library", "storage")
+    raw_bool_cols = {col for cols in category_groups.values() for col in cols}
+    poi = poi.drop(columns=[c for c in raw_bool_cols if c in poi.columns])
+
     df = poi.copy()
     _write(df, "clean_poi", engine)
     engine.dispose()
