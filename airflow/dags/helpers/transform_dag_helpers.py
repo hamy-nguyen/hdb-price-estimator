@@ -4,7 +4,7 @@ from sklearn.neighbors import BallTree
 import numpy as np
 import re
 from . import data_watermarking as dw
-from airflow.sdk.bases.hook import BaseHook
+from airflow.hooks.base import BaseHook
 import logging
 import gc
 

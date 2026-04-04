@@ -16,8 +16,7 @@ import logging
 import pandas as pd
 from sqlalchemy import create_engine, text, String, Integer, Float, DateTime
 from pyproj import Transformer
-
-from airflow.sdk.bases.hook import BaseHook
+from airflow.hooks.base import BaseHook
 
 logger = logging.getLogger(__name__)
 

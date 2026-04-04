@@ -37,39 +37,6 @@ def _http_session() -> requests.Session:
     session.mount("http://", adapter)
     return session
 
-
-# Primary keys for each table — used for upsert (ON DUPLICATE KEY UPDATE).
-# The _fp (fingerprint) column is excluded; it's added by the watermark step.
-# Primary keys for each table — used for upsert (ON DUPLICATE KEY UPDATE).
-# Each entry maps column name → VARCHAR length for the PK definition.
-# Lengths verified against actual data (max observed + headroom).
-#
-# Source             Column              Max observed  VARCHAR set
-# ------             ------              ------------  -----------
-# resale_flat_price  month               7             10
-#                    town                15            20
-#                    flat_type           16            20
-#                    block               4             10
-#                    street_name         20            30
-#                    storey_range        8             15
-#                    floor_area_sqm      5             10
-#                    lease_commence_date 4             10
-# tourist_attract.   objectid_1          4             10
-# carpark            car_park_no         4             10
-# hdb                blk_no              4             10
-#                    street              25            40
-# poi                place_id            27            40
-# bus_vol            month               6             10
-#                    day                 2             5
-#                    hour                2             5
-#                    stop_id             5             10
-# bus_line           line                4             10
-#                    direction           1             5
-#                    sequence            3             10
-# mrt                name                29            50
-#                    line                2             10
-# onemap_*           planning_area       23            40
-#                    year                4             10
 PRIMARY_KEYS = {
     "raw_tourist_attractions": {"objectid_1": 10},
     "raw_carpark": {"car_park_no": 10},
@@ -250,10 +217,7 @@ def extract_from_source(
 def _get_mysql_connection(mysql_conn_id: str):
     """Get a pymysql connection using Airflow connection details."""
     import pymysql
-    try:
-        from airflow.sdk.bases.hook import BaseHook   # Airflow 3.x (future)
-    except ImportError:
-        from airflow.hooks.base import BaseHook       # Airflow 3.0.0 / 2.x
+    from airflow.hooks.base import BaseHook
     conn = BaseHook.get_connection(mysql_conn_id)
     return pymysql.connect(
         host=conn.host or "localhost",
