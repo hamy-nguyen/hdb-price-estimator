@@ -383,7 +383,8 @@ def watermark_extracted_data(extract_task_id: str, **kwargs) -> str:
     if not json_str:
         raise ValueError(f"No data from extract task: {extract_task_id}")
 
-    df = pd.read_json(io.StringIO(json_str))
+    df = pd.read_json(io.StringIO(json_str), dtype=False)
+    df = df.astype(object)
     if df.empty:
         return df.to_json(date_format="iso", orient="records") or "[]"
 
@@ -394,12 +395,17 @@ def watermark_extracted_data(extract_task_id: str, **kwargs) -> str:
     if dw.FINGERPRINT_COL in df.columns:
         df = df.drop(columns=[dw.FINGERPRINT_COL])
 
+    # Stringify all non-None values to match what _sanitize stores in MySQL (TEXT columns).
+    for col in df.columns:
+        df[col] = df[col].apply(lambda v: str(v) if v is not None else None)
+
     df = dw.add_fingerprint_column(df)
+
     result = df.to_json(date_format="iso", orient="records")
+
     if result is None:
         raise RuntimeError("DataFrame.to_json returned None unexpectedly")
     return result
-
 
 def upsert_to_mysql(
     extract_task_id: str,
