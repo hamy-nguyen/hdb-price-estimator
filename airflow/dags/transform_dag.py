@@ -3,6 +3,7 @@ try:
     from airflow.sdk import dag, task          # Airflow 3.x
 except ImportError:
     from airflow.decorators import dag, task  # Airflow 2.x
+
 from helpers.transform_dag_helpers import (
     joinable_resale_prices,
     join_hdb,
@@ -17,9 +18,15 @@ from helpers.transform_dag_helpers import (
 
 DAG_ID = "data_transform"
 MYSQL_CONN_ID = "mysql_default"
+DEFAULT_ARGS = {
+    "owner": "airflow",
+    "retries": 1,
+    "retry_delay": 60,
+}
 
 @dag(
     dag_id=DAG_ID,
+    default_args=DEFAULT_ARGS, 
     schedule=None, # only run on demand for now (ie triggered manually)
     start_date=datetime.now() - timedelta(days=1), 
     catchup=False
