@@ -51,7 +51,6 @@ PRIMARY_KEYS = {
     "raw_bus_vol": {"month": 10, "day": 5, "hour": 5, "stop_id": 10},
     "raw_bus_line": {"line": 10, "direction": 5, "sequence": 10},
     "raw_mrt": {"name": 50, "line": 10},
-    "raw_onemap_planning_areas": {"planning_area": 40, "year": 10},
     "raw_onemap_transport_school": {"planning_area": 40, "year": 10},
     "raw_onemap_transport_work": {"planning_area": 40, "year": 10},
     "raw_onemap_tenancy": {"planning_area": 40, "year": 10},
@@ -107,11 +106,6 @@ SOURCES = {
         "api_type": "csv_file",
         "file_path": "dataset/raw/mrt.csv",
         "table_name": "raw_mrt"
-    },
-    "planning_areas": {
-        "api_type": "csv_file",
-        "file_path": "dataset/raw/onemap_planning_areas.csv",
-        "table_name": "raw_onemap_planning_areas",
     },
     "transport_to_school": {
         "api_type": "csv_file",
