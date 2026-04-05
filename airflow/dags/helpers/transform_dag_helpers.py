@@ -514,28 +514,9 @@ def join_car_park(mysql_conn_id):
 
     # Prepare car park features upfront
     car_park['has_free_parking'] = (car_park['free_parking'] != "NO").astype(int)
-    # car_park['is_free_daytime'] = car_park['free_parking'].str.contains("7AM-10.30PM", na=False).astype(int)
-    # car_park['is_free_halfday'] = car_park['free_parking'].str.contains("1PM-10.30PM", na=False).astype(int)
     car_park['has_short_term_parking'] = (car_park['short_term_parking'] != "NO").astype(int)
     car_park['has_night_parking'] = car_park['night_parking'].map({'YES': 1, 'NO': 0})
-    # car_park['is_visitor_friendly'] = (
-    #     (car_park['has_short_term_parking'] == 1) &
-    #     (car_park['has_free_parking'] == 1) &
-    #     (car_park['has_night_parking'] == 1)
-    # ).astype(int)
-    # car_park['has_height_restriction'] = (car_park['gantry_height'] > 0).astype(int)
-    # car_park['has_big_vehicle_restriction'] = (
-    #     (car_park['has_height_restriction'] == 1) &
-    #     (car_park['gantry_height'] < 2.15)
-    # ).astype(int)
     car_park['has_car_park_basement'] = car_park['car_park_basement'].map({'Y': 1, 'N': 0})
-
-    # carpark_new_cols = [
-    #     "gantry_height", "car_park_decks", "has_free_parking",
-    #     "is_free_daytime", "is_free_halfday", "has_short_term_parking",
-    #     "has_night_parking", "is_visitor_friendly", "has_height_restriction",
-    #     "has_big_vehicle_restriction", "has_car_park_basement"
-    # ]
 
     carpark_new_cols = [
         "gantry_height", "car_park_decks", "has_free_parking",
@@ -816,30 +797,6 @@ def transform_resale_prices(mysql_conn_id):
         + (resale["month_and_year"].dt.month - min_month.month)
     )
 
-    # Rolling 6-month median price per town (lagged by 1 month to avoid leakage)
-    resale = resale.sort_values(["town", "month_and_year"])
-    town_monthly_median = (
-        resale.groupby(["town", "month_and_year"])["resale_price"]
-        .median()
-        .reset_index()
-        .rename(columns={"resale_price": "town_median_price"})
-    )
-    town_monthly_median = town_monthly_median.sort_values(["town", "month_and_year"])
-    town_monthly_median["town_price_trend_6m"] = (
-        town_monthly_median
-        .groupby("town")["town_median_price"]
-        .transform(lambda x: x.rolling(6, min_periods=1).mean().shift(1))
-    )
-    resale = resale.merge(
-        town_monthly_median[["town", "month_and_year", "town_price_trend_6m"]],
-        on=["town", "month_and_year"],
-        how="left"
-    )
-
-    # remove values where town_price_trend_6m is NaN (i.e. the first 6 months of data for each town)
-    # to avoid leakage from the target variable's own month
-    resale = resale.dropna(subset=["town_price_trend_6m"])
-
     # Log-transformed target
     resale["log_resale_price"] = np.log1p(resale["resale_price"])
 
@@ -861,8 +818,6 @@ def transform_resale_prices(mysql_conn_id):
     resale["remaining_lease_years"] = resale["remaining_lease"].apply(parse_remaining_lease)
     resale["lease_age"] = 99 - resale["remaining_lease_years"]
     resale["lease_age_sq"] = resale["lease_age"] ** 2
-
-    resale["price_per_sqm"] = resale["resale_price"] / resale["floor_area_sqm"]
 
     # Interaction: floor area × storey midpoint
     storey_order = sorted(resale["storey_range"].unique(), key=lambda x: int(x.split(" TO ")[0]))
