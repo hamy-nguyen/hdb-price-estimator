@@ -2,22 +2,33 @@
 Cleaning helpers for the data_clean DAG.
 
 Each function:
-  1. Reads one raw_* table from MySQL into a DataFrame
-  2. Applies cleaning logic (fill in your logic in each TODO section)
-  3. Writes the result to a clean_* table (replace each run)
+  Static datasets: skip when clean_* table fingerprints are already valid.
+  1. Reads the raw_* table from MySQL (drops raw _fp).
+  2. Applies cleaning logic.
+  3. Writes cleaned data → reads back from SQL → adds _fp → writes with _fp.
+  4. Verifies stored _fp values match recomputed ones; retries on mismatch.
 
-All functions accept mysql_conn_id and use the shared get_mysql_engine helper
-so connection details stay in Airflow's connection store, not in code.
+resale_flat_price: incremental monthly logic driven by pipeline_tracking.
 """
 
 import gc
 import logging
 
 import pandas as pd
-from sqlalchemy import create_engine, text, String, Integer, Float, DateTime
+from sqlalchemy import create_engine, text
+from sqlalchemy import inspect
 from pyproj import Transformer
 
 from airflow.sdk.bases.hook import BaseHook
+from helpers.dag_helpers import (
+    _verify_fps_from_db,
+    ensure_tracking_table,
+    _tracking_is_done,
+    _tracking_get_pending,
+    _tracking_mark_done,
+    get_dtype_mapping,
+    get_previous_month,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,38 +42,132 @@ def get_mysql_engine(mysql_conn_id: str):
         f"mysql+pymysql://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}"
     )
 
-def _read(sql: str, engine) -> pd.DataFrame:
-    """Read a SQL query into a DataFrame using an explicit connection (pandas 2.x + SQLAlchemy 2.x compatible)."""
+def _read(sql: str, engine, params: dict | None = None) -> pd.DataFrame:
+    """Read a SQL query into a DataFrame, optionally with bound parameters."""
     with engine.connect() as conn:
-        return pd.read_sql(text(sql), con=conn)
+        return pd.read_sql(text(sql), con=conn, params=params)
 
 def _write(df: pd.DataFrame, table: str, engine) -> None:
-    """Write a DataFrame to MySQL, replacing any existing table."""
-    # Build explicit dtype map so SQLAlchemy quotes column names in CREATE TABLE
-    dtype_map = {}
-    for col, dtype in df.dtypes.items():
-        if pd.api.types.is_integer_dtype(dtype):
-            dtype_map[col] = Integer()
-        elif pd.api.types.is_float_dtype(dtype):
-            dtype_map[col] = Float()
-        elif pd.api.types.is_bool_dtype(dtype):
-            dtype_map[col] = Integer()
-        elif pd.api.types.is_datetime64_any_dtype(dtype):
-            dtype_map[col] = DateTime()
-        else:
-            dtype_map[col] = String(255)
-    df.to_sql(table, con=engine, if_exists="replace", index=False, dtype=dtype_map)
+    """Write a DataFrame to MySQL, replacing any existing table (no _fp)."""
+    df.to_sql(table, con=engine, if_exists="replace", index=False, dtype=get_dtype_mapping(df))
     logger.info("Wrote %d rows to %s", len(df), table)
+
+
+def _table_exists(engine, table: str) -> bool:
+    """Check whether a table exists in the current SQLAlchemy engine schema."""
+    return inspect(engine).has_table(table)
+
+
+def _table_has_column(engine, table: str, column: str) -> bool:
+    """Check whether a table contains a specific column."""
+    if not _table_exists(engine, table):
+        return False
+    cols = inspect(engine).get_columns(table)
+    return any(col.get("name") == column for col in cols)
+
+def _write_with_fp(
+    df: pd.DataFrame,
+    table: str,
+    engine,
+    mysql_conn_id: str,
+    max_retries: int = 3,
+    month_col: str | None = None,
+    month_val: str | None = None,
+) -> None:
+    """
+    Write *df* to *table*, generate _fp via a SQL round-trip, and verify.
+
+    Per attempt:
+        1. Write df (without _fp) — replace for full table; for month slices,
+            delete+append when the table exists, otherwise bootstrap table creation.
+      2. Read back from SQL → compute _fp from MySQL-stored values.
+      3. Write back with _fp.
+      4. Verify via _verify_fps_from_db (reads DB, recomputes, compares).
+      5. Retry on mismatch; raise after max_retries.
+    """
+    from helpers import data_watermarking as dw
+
+    df = df.copy()
+    if dw.FINGERPRINT_COL in df.columns:
+        df = df.drop(columns=[dw.FINGERPRINT_COL])
+
+    for attempt in range(1, max_retries + 1):
+        # --- Step 1: write without _fp ---
+        if month_col and month_val:
+            if _table_exists(engine, table):
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(f"DELETE FROM `{table}` WHERE `{month_col}` = :m"),
+                        {"m": month_val},
+                    )
+                df.to_sql(table, con=engine, if_exists="append", index=False,
+                          dtype=get_dtype_mapping(df))
+            else:
+                # First incremental write: bootstrap destination table.
+                df.to_sql(table, con=engine, if_exists="replace", index=False,
+                          dtype=get_dtype_mapping(df))
+        else:
+            _write(df, table, engine)
+
+        # --- Step 2: read back → compute _fp from SQL-stored values ---
+        if month_col and month_val:
+            df_sql = _read(
+                f"SELECT * FROM `{table}` WHERE `{month_col}` = :m",
+                engine,
+                params={"m": month_val},
+            )
+        else:
+            df_sql = _read(f"SELECT * FROM `{table}`", engine)
+
+        if dw.FINGERPRINT_COL in df_sql.columns:
+            df_sql = df_sql.drop(columns=[dw.FINGERPRINT_COL])
+        df_with_fp = dw.add_fingerprint_column(df_sql)
+
+        # --- Step 3: write back with _fp ---
+        if month_col and month_val:
+            if not _table_has_column(engine, table, dw.FINGERPRINT_COL):
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE `{table}` ADD COLUMN `{dw.FINGERPRINT_COL}` TEXT"))
+            with engine.begin() as conn:
+                conn.execute(
+                    text(f"DELETE FROM `{table}` WHERE `{month_col}` = :m"),
+                    {"m": month_val},
+                )
+            df_with_fp.to_sql(table, con=engine, if_exists="append", index=False,
+                              dtype=get_dtype_mapping(df_with_fp))
+        else:
+            _write(df_with_fp, table, engine)
+
+        # --- Step 4: verify from DB ---
+        if _verify_fps_from_db(mysql_conn_id, table, month_col=month_col, month_val=month_val):
+            logger.info("_write_with_fp: table=%s verified OK (attempt %d)", table, attempt)
+            return
+
+        logger.warning(
+            "_write_with_fp: table=%s mismatches — retrying (attempt %d/%d)",
+            table, attempt, max_retries,
+        )
+
+    raise RuntimeError(
+        f"_write_with_fp: table={table} failed verification after {max_retries} attempts"
+    )
 
 # ---------------------------------------------------------------------------
 # One function per raw table
 # ---------------------------------------------------------------------------
 
 def clean_hdb(mysql_conn_id: str) -> None:
+    if _verify_fps_from_db(mysql_conn_id, "clean_hdb"):
+        logger.info("clean_hdb: FPs valid — skipping")
+        return
+
     logger.info("Cleaning raw_hdb...")
     engine = get_mysql_engine(mysql_conn_id)
 
     hdb = _read("SELECT * FROM raw_hdb", engine)
+
+    # Drop fingerprint carried over from raw table
+    hdb.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Drop "unnamed:_0" column
     hdb.drop(columns=['unnamed:_0'], errors='ignore', inplace=True)
@@ -93,17 +198,22 @@ def clean_hdb(mysql_conn_id: str) -> None:
     # Remove duplicates
     hdb = hdb.drop_duplicates(subset=['blk_no','street'])
 
-    _write(hdb, "clean_hdb", engine)
+    _write_with_fp(hdb, "clean_hdb", engine, mysql_conn_id)
 
     engine.dispose()
     del hdb
     gc.collect()
 
 def clean_mrt(mysql_conn_id: str) -> None:
+    if _verify_fps_from_db(mysql_conn_id, "clean_mrt"):
+        logger.info("clean_mrt: FPs valid — skipping")
+        return
+
     logger.info("Cleaning raw_mrt...")
     engine = get_mysql_engine(mysql_conn_id)
 
     mrt = _read("SELECT * FROM raw_mrt", engine)
+    mrt.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Drop "unnamed:_0" column
     mrt.drop(columns=['unnamed:_0'], errors='ignore', inplace=True)
@@ -121,17 +231,22 @@ def clean_mrt(mysql_conn_id: str) -> None:
     # Remove duplicates
     mrt = mrt.drop_duplicates(subset=['stop_id'])
 
-    _write(mrt, "clean_mrt", engine)
+    _write_with_fp(mrt, "clean_mrt", engine, mysql_conn_id)
 
     engine.dispose()
     del mrt
     gc.collect()
 
 def clean_poi(mysql_conn_id: str) -> None:
+    if _verify_fps_from_db(mysql_conn_id, "clean_poi"):
+        logger.info("clean_poi: FPs valid — skipping")
+        return
+
     logger.info("Cleaning raw_poi...")
     engine = get_mysql_engine(mysql_conn_id)
 
     poi = _read("SELECT * FROM raw_poi", engine)
+    poi.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Drop "unnamed:_0" column
     poi.drop(columns=['unnamed:_0'], errors='ignore', inplace=True)
@@ -142,7 +257,8 @@ def clean_poi(mysql_conn_id: str) -> None:
     # Drop rows with small missing location values (Just 2 rows)
     poi = poi.dropna(subset=[
         'pln_area_c', 'subzone_no', 'subzone_n',
-        'subzone_c', 'pln_area_n', 'planning_area'
+        'subzone_c', 'pln_area_n', 'planning_area',
+        'region_n', 'region_c'
     ])
 
     # Remove duplicates
@@ -159,32 +275,23 @@ def clean_poi(mysql_conn_id: str) -> None:
     poi = poi[poi["rating"].between(0, 5)]
     poi = poi[poi["user_ratings_total"] >= 0]
 
-    # convert boolean to 1/0
-    category_cols = [col for col in poi.columns if col not in [
-        'place_id', 'name', 'lat', 'lng', 'rating', 'user_ratings_total',
-        'compound_code', 'planning_area', 'subzone_no', 'subzone_n', 'subzone_c',
-        'pln_area_n', 'pln_area_c', 'region_n', 'region_c', '_fp'
-    ]]
-
-    for col in category_cols:
-        poi[col] = (
-            poi[col]
-            .map({"True": 1, "False": 0})
-            .astype(int)
-        )
-
-    _write(poi, "clean_poi", engine)
+    _write_with_fp(poi, "clean_poi", engine, mysql_conn_id)
 
     engine.dispose()
     del poi
     gc.collect()
 
 def clean_onemap(mysql_conn_id: str) -> None:
+    if _verify_fps_from_db(mysql_conn_id, "clean_onemap_transport_school"):
+        logger.info("clean_onemap: FPs valid — skipping")
+        return
+
     logger.info("Cleaning OneMap data...")
     engine = get_mysql_engine(mysql_conn_id)
 
     # transport_school
     transport_school = _read("SELECT * FROM raw_onemap_transport_school", engine)
+    transport_school.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     transport_cols = [
         'bus', 'mrt', 'mrt_bus', 'mrt_car',
@@ -201,39 +308,38 @@ def clean_onemap(mysql_conn_id: str) -> None:
     # fill nas with 0s for transport_school as missing values likely indicate 0 transport demand
     transport_school = transport_school.fillna(0)
 
-    _write(transport_school, "clean_onemap_transport_school", engine)
-    
+    _write_with_fp(transport_school, "clean_onemap_transport_school", engine, mysql_conn_id)
     del transport_school
     gc.collect()
 
     # transport_work
     transport_work = _read("SELECT * FROM raw_onemap_transport_work", engine)
+    transport_work.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     transport_work[transport_cols] = transport_work[transport_cols].apply(
         pd.to_numeric, errors='coerce'
     )
     transport_work = transport_work.fillna(0)
 
-    _write(transport_work, "clean_onemap_transport_work", engine)
-
+    _write_with_fp(transport_work, "clean_onemap_transport_work", engine, mysql_conn_id)
     del transport_work
     gc.collect()
 
     # tenancy
     tenancy = _read("SELECT * FROM raw_onemap_tenancy", engine)
+    tenancy.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     tenant_cols = ['owner', 'tenant', 'others']
-
     tenancy[tenant_cols] = tenancy[tenant_cols].apply(pd.to_numeric, errors='coerce')
     tenancy = tenancy.fillna(0)
 
-    _write(tenancy, "clean_onemap_tenancy", engine)
-
+    _write_with_fp(tenancy, "clean_onemap_tenancy", engine, mysql_conn_id)
     del tenancy
     gc.collect()
 
     # dwelling
     dwelling = _read("SELECT * FROM raw_onemap_dwelling", engine)
+    dwelling.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     dwelling_cols = [
         'hdb_1_and_2_room_flats',
@@ -250,17 +356,22 @@ def clean_onemap(mysql_conn_id: str) -> None:
     )
     dwelling = dwelling.fillna(0)
 
-    _write(dwelling, "clean_onemap_dwelling", engine)
+    _write_with_fp(dwelling, "clean_onemap_dwelling", engine, mysql_conn_id)
 
     engine.dispose()
     del dwelling
     gc.collect()
 
 def clean_carpark(mysql_conn_id: str) -> None:
+    if _verify_fps_from_db(mysql_conn_id, "clean_carpark"):
+        logger.info("clean_carpark: FPs valid — skipping")
+        return
+
     logger.info("Cleaning raw_carpark...")
     engine = get_mysql_engine(mysql_conn_id)
 
     car_park = _read("SELECT * FROM raw_carpark", engine)
+    car_park.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Convert columns to the right datatype
     car_park['x_coord'] = pd.to_numeric(car_park['x_coord'], errors='coerce')
@@ -343,18 +454,23 @@ def clean_carpark(mysql_conn_id: str) -> None:
 
             car_park.loc[nonsurface_mask, num_col] = median_val
 
-    _write(car_park, "clean_carpark", engine)
+    _write_with_fp(car_park, "clean_carpark", engine, mysql_conn_id)
 
     engine.dispose()
     del car_park
     gc.collect()
 
 def clean_bus(mysql_conn_id: str) -> None:
-    logger.info("Joining bus data...") 
+    if _verify_fps_from_db(mysql_conn_id, "clean_bus_stops"):
+        logger.info("clean_bus: FPs valid — skipping")
+        return
+
+    logger.info("Cleaning bus data...")
     engine = get_mysql_engine(mysql_conn_id)
 
     # bus_stops
     bus_stops = _read("SELECT * FROM raw_bus_stops", engine)
+    bus_stops.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Drop "unnamed:_0" column
     bus_stops.drop(columns=['unnamed:_0'], errors='ignore', inplace=True)
@@ -372,13 +488,13 @@ def clean_bus(mysql_conn_id: str) -> None:
 
     bus_stops = bus_stops.drop_duplicates(subset=['stop_id'])
 
-    _write(bus_stops, "clean_bus_stops", engine)
-
+    _write_with_fp(bus_stops, "clean_bus_stops", engine, mysql_conn_id)
     del bus_stops
     gc.collect()
-    
+
     # bus_vol
     bus_vol = _read("SELECT * FROM raw_bus_vol", engine)
+    bus_vol.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Drop "unnamed:_0" column
     bus_vol.drop(columns=['unnamed:_0'], errors='ignore', inplace=True)
@@ -396,13 +512,13 @@ def clean_bus(mysql_conn_id: str) -> None:
     # Remove duplicates
     bus_vol = bus_vol.drop_duplicates(subset=['stop_id','hour','day','month'])
 
-    _write(bus_vol, "clean_bus_vol", engine)
-
+    _write_with_fp(bus_vol, "clean_bus_vol", engine, mysql_conn_id)
     del bus_vol
     gc.collect()
 
     # bus_line
     bus_line = _read("SELECT * FROM raw_bus_line", engine)
+    bus_line.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Drop "unnamed:_0" column
     bus_line.drop(columns=['unnamed:_0'], errors='ignore', inplace=True)
@@ -423,17 +539,22 @@ def clean_bus(mysql_conn_id: str) -> None:
     # Remove duplicates
     bus_line = bus_line.drop_duplicates(subset=['line','direction','sequence','stop_id'])
 
-    _write(bus_line, "clean_bus_line", engine)
+    _write_with_fp(bus_line, "clean_bus_line", engine, mysql_conn_id)
 
     engine.dispose()
     del bus_line
     gc.collect()
 
 def clean_tourist_attractions(mysql_conn_id: str) -> None:
+    if _verify_fps_from_db(mysql_conn_id, "clean_tourist_attractions"):
+        logger.info("clean_tourist_attractions: FPs valid — skipping")
+        return
+
     logger.info("Cleaning raw_tourist_attractions...")
     engine = get_mysql_engine(mysql_conn_id)
 
     tourist_attractions = _read("SELECT * FROM raw_tourist_attractions", engine)
+    tourist_attractions.drop(columns=['_fp'], errors='ignore', inplace=True)
 
     # Clean up unnecessary columns
     COLS_TO_DROP = [
@@ -474,26 +595,105 @@ def clean_tourist_attractions(mysql_conn_id: str) -> None:
         errors="ignore",
     )
 
-    _write(tourist_attractions, "clean_tourist_attractions", engine)
+    _write_with_fp(tourist_attractions, "clean_tourist_attractions", engine, mysql_conn_id)
 
     engine.dispose()
     del tourist_attractions
     gc.collect()
 
+
+def _clean_resale_month(resale_month: pd.DataFrame) -> pd.DataFrame:
+    """Apply cleaning transforms to a single month's resale DataFrame slice.
+
+    `month` is kept as a 'YYYY-MM' string so it matches pipeline_tracking format
+    and can be used directly in WHERE clauses without datetime conversion issues.
+    Conversion to datetime happens in the transform step (joinable_resale_prices).
+    """
+    resale_month = resale_month.copy()
+    resale_month.drop(columns=['_fp'], errors='ignore', inplace=True)
+    resale_month["resale_price"] = pd.to_numeric(resale_month["resale_price"], errors="coerce")
+    resale_month["floor_area_sqm"] = pd.to_numeric(resale_month["floor_area_sqm"], errors="coerce")
+    resale_month["lease_commence_date"] = pd.to_numeric(
+        resale_month["lease_commence_date"], errors="coerce"
+    )
+    return resale_month
+
+
 def clean_resale_flat_price(mysql_conn_id: str) -> None:
-    logger.info("Cleaning raw_resale_flat_price...")
+    """
+    Incremental monthly cleaning for resale_flat_price.
+
+    Only processes months up to (and including) the previous calendar month.
+    Skips immediately when the target month is already cleaned and its _fp
+    is verified.  For each pending month:
+      1. Reads that month's raw data.
+      2. Cleans it (month kept as 'YYYY-MM' string).
+      3. Appends to clean_resale_flat_price, generating _fp via SQL round-trip.
+      4. Marks is_cleaned = True in pipeline_tracking.
+    """
+    ensure_tracking_table(mysql_conn_id)
+    target_month = get_previous_month()
+
+    # Fast-path skip: target month already cleaned and full table fingerprints valid.
+    if (
+        _tracking_is_done(mysql_conn_id, target_month, "is_cleaned")
+        and _verify_fps_from_db(mysql_conn_id, "clean_resale_flat_price")
+    ):
+        logger.info(
+            "clean_resale_flat_price: month=%s already cleaned & verified — skipping",
+            target_month,
+        )
+        return
+
+    pending_months = _tracking_get_pending(
+        mysql_conn_id, "is_cleaned", prerequisite="is_ingested", up_to_month=target_month
+    )
+
+    if not pending_months:
+        logger.info("clean_resale_flat_price: no pending months — skipping")
+        return
+
+    logger.info(
+        "clean_resale_flat_price: cleaning %d pending month(s): %s",
+        len(pending_months), pending_months,
+    )
+
     engine = get_mysql_engine(mysql_conn_id)
 
-    resale = _read("SELECT * FROM raw_resale_flat_price", engine)
+    for month_val in pending_months:
+        logger.info("clean_resale_flat_price: processing month=%s", month_val)
 
-    # Convert columns to the right datatype
-    resale["month"] = pd.to_datetime(resale["month"], format="%Y-%m")
-    resale["resale_price"] = pd.to_numeric(resale["resale_price"], errors="coerce")
-    resale["floor_area_sqm"] = pd.to_numeric(resale["floor_area_sqm"], errors="coerce")
-    resale["lease_commence_date"] = pd.to_numeric(resale["lease_commence_date"], errors="coerce")
+        raw = _read(
+            "SELECT * FROM raw_resale_flat_price WHERE month = :m",
+            engine,
+            params={"m": month_val},
+        )
 
-    _write(resale, "clean_resale_flat_price", engine)
+        if raw.empty:
+            logger.warning(
+                "clean_resale_flat_price: no raw data for month=%s — skipping", month_val
+            )
+            continue
+
+        cleaned = _clean_resale_month(raw)
+        del raw
+        gc.collect()
+
+        # month is kept as 'YYYY-MM' string — use month_val directly for the
+        # WHERE clause in _write_with_fp (no datetime conversion needed).
+        _write_with_fp(
+            cleaned,
+            "clean_resale_flat_price",
+            engine,
+            mysql_conn_id,
+            month_col="month",
+            month_val=month_val,
+        )
+
+        _tracking_mark_done(mysql_conn_id, month_val, "is_cleaned")
+        logger.info("clean_resale_flat_price: month=%s — done", month_val)
+
+        del cleaned
+        gc.collect()
 
     engine.dispose()
-    del resale
-    gc.collect()
