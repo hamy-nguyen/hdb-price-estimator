@@ -29,10 +29,19 @@ cd api
 pip install -r requirements.txt
 ```
 
-Copy the example env file if you want to override the model path:
+Copy the example env file and set your model path:
 
 ```bash
 cp .env.example .env
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `MODEL_PATH` | `models/model.pkl` | Path to the model pickle file, relative to the `api/` directory |
+
+Example:
+```
+MODEL_PATH=models/xgb_model_log.pkl
 ```
 
 ---
