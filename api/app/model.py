@@ -4,31 +4,18 @@ import pathlib
 import pickle
 
 import numpy as np
+import pandas as pd
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
 # Ordered list of feature names — must match the order the model was trained on
 FEATURE_COLUMNS = [
-    "flat_type", "floor_area_sqm", "flat_model", "storey_mid", "month", "year",
-    "quarter", "month_index", "max_floor_lvl", "total_dwelling_units",
-    "has_market_hawker", "has_multistorey_carpark", "year_completed", "building_age",
-    "remaining_lease_years", "lease_age", "lease_age_sq", "latitude", "longitude",
-    "planning_area", "region", "town", "dist_to_nearest_mrt_m", "n_mrt_within_1km",
-    "dist_to_school_m", "n_school_within_1km", "dist_to_mall_m", "n_mall_within_1km",
-    "dist_to_food_m", "n_food_within_1km", "dist_to_park_m", "n_park_within_1km",
-    "dist_to_supermarket_m", "n_supermarket_within_1km", "dist_to_nearest_carpark_m",
-    "n_carparks_within_500m", "gantry_height", "car_park_decks", "has_free_parking",
-    "has_short_term_parking", "has_night_parking", "has_car_park_basement",
-    "dist_to_nearest_bus_stop_m", "n_bus_stop_within_1km",
-    "nearest_bus_stop_operating_days_per_week", "nearest_bus_stop_busyness_level",
-    "dist_to_nearest_tourist_attraction_m", "transport_school_pct_bus",
-    "transport_school_pct_mrt", "transport_school_pct_mrt_bus",
-    "transport_school_pct_car", "tenancy_pct_owner", "dwelling_pct_1room",
-    "dwelling_pct_2room", "dwelling_pct_3room", "dwelling_pct_4room",
-    "dwelling_pct_5room", "dwelling_pct_exec", "dwelling_pct_studio",
-    "dwelling_pct_multi_gen", "floor_area_x_storey", "storey_ratio",
-    "town_price_trend_6m",
+    "flat_model", "floor_area_sqm", "max_floor_lvl", "total_dwelling_units",
+    "storey_mid", "remaining_lease_years", "town", "dist_to_nearest_mrt_m",
+    "n_mrt_within_1km", "dist_to_nearest_bus_stop_m", "n_bus_stop_within_1km",
+    "month_index", "dist_to_food_m", "n_food_within_1km",
+    "dist_to_supermarket_m", "n_supermarket_within_1km",
 ]
 
 DUMMY_PREDICTION = 500_000.0
@@ -62,7 +49,7 @@ def predict(features: dict) -> float:
         return DUMMY_PREDICTION
 
     try:
-        X = np.array([[features[col] for col in FEATURE_COLUMNS]])
+        X = pd.DataFrame([{col: features[col] for col in FEATURE_COLUMNS}])
     except KeyError as e:
         raise HTTPException(status_code=422, detail=f"Missing feature: {e}")
 
