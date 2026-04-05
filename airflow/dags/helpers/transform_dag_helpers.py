@@ -1,10 +1,24 @@
-from sqlalchemy import create_engine, text, String, Integer, Float, DateTime
+from sqlalchemy import create_engine, text
 import pandas as pd
 from sklearn.neighbors import BallTree
 import numpy as np
 import re
 from . import data_watermarking as dw
-from airflow.hooks.base import BaseHook
+
+try:
+    from airflow.sdk.bases.hook import BaseHook
+except ImportError:
+    from airflow.hooks.base import BaseHook
+
+from helpers.dag_helpers import (
+    get_dtype_mapping,
+    ensure_tracking_table,
+    _tracking_is_done,
+    _tracking_get_pending,
+    _tracking_mark_done,
+    _verify_fps_from_db,
+    get_previous_month,
+)
 import logging
 import gc
 
@@ -32,38 +46,52 @@ def get_mysql_engine(mysql_conn_id):
         f"mysql+pymysql://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}"
     )
 
-def get_dtype_mapping(df):
-    dtype_map = {}
-    for col, dtype in df.dtypes.items():
-        if pd.api.types.is_integer_dtype(dtype):
-            dtype_map[col] = Integer()
-        elif pd.api.types.is_float_dtype(dtype):
-            dtype_map[col] = Float()
-        elif pd.api.types.is_bool_dtype(dtype):
-            dtype_map[col] = Integer()
-        elif pd.api.types.is_datetime64_any_dtype(dtype):
-            dtype_map[col] = DateTime()
-        else:
-            dtype_map[col] = String(255)
-
-    return dtype_map
-
 def joinable_resale_prices(mysql_conn_id):
-    logger.info("Preparing joinable resale flat prices data...")
+    """
+    Load all cleaned resale data (up to the previous calendar month) into the
+    working transform table.
+
+    Skips if:
+      - the target month is already transformed and its tracking entry is valid, OR
+      - there are no pending months (is_cleaned=True, is_transformed=False) up to
+        target_month.
+    """
+    from airflow.exceptions import AirflowSkipException
+
+    ensure_tracking_table(mysql_conn_id)
+    target_month = get_previous_month()
+
+    # Fast-path skip: target month already transformed and full table fingerprints valid.
+    if (
+        _tracking_is_done(mysql_conn_id, target_month, "is_transformed")
+        and _verify_fps_from_db(mysql_conn_id, TARGET_TABLE)
+    ):
+        logger.info(
+            "joinable_resale_prices: month=%s already transformed & verified — skipping", target_month
+        )
+        raise AirflowSkipException(f"month={target_month} already transformed")
+
+    pending = _tracking_get_pending(
+        mysql_conn_id, "is_transformed", prerequisite="is_cleaned", up_to_month=target_month
+    )
+    if not pending:
+        logger.info("joinable_resale_prices: no pending months — skipping transform pipeline")
+        raise AirflowSkipException("No months pending transformation")
+
+    logger.info(
+        "joinable_resale_prices: %d month(s) pending — running full transform", len(pending)
+    )
 
     engine_hdb = get_mysql_engine(mysql_conn_id)
 
-    str_sql = f'''
-    SELECT * FROM clean_resale_flat_price
-    '''
-
-    resale = pd.read_sql(sql=str_sql, con=engine_hdb)
+    resale = pd.read_sql("SELECT * FROM clean_resale_flat_price", con=engine_hdb)
 
     resale['full_address'] = resale['block'] + ' ' + resale['street_name']
 
-    resale = resale.rename(columns={
-        'month': 'month_and_year'
-    })
+    # Rename and convert to datetime — month is stored as 'YYYY-MM' string in
+    # clean_resale_flat_price; datetime is needed for .dt operations downstream.
+    resale = resale.rename(columns={'month': 'month_and_year'})
+    resale['month_and_year'] = pd.to_datetime(resale['month_and_year'], format="%Y-%m")
 
     # will be computed again after all transformations and joins are done, but drop here to save memory
     resale = resale.drop(columns=["_fp", "block", "street_name"])
@@ -851,16 +879,17 @@ def transform_resale_prices(mysql_conn_id):
     # drop columns that are no longer needed for modeling
     resale.drop(columns=["storey_range", "remaining_lease", "nearest_carpark"], inplace=True)
 
-    # compute _fp column again (part by part to avoid memory issues)
-    logging.info("Recomputing fingerprint column after all transformations and joins...")
+    # Compute _fp from SQL-extracted rows (write without _fp first, then read back).
+    logging.info("Writing transform result without _fp for SQL round-trip fingerprinting...")
+
+    if dw.FINGERPRINT_COL in resale.columns:
+        resale = resale.drop(columns=[dw.FINGERPRINT_COL])
 
     chunk_size = 20000
     first = True
 
     for start in range(0, len(resale), chunk_size):
         chunk = resale.iloc[start:start + chunk_size].copy()
-        chunk = dw.add_fingerprint_column(chunk)
-
         chunk.to_sql(
             'transform_resale_flat_price',
             con=engine_hdb,
@@ -870,10 +899,52 @@ def transform_resale_prices(mysql_conn_id):
             chunksize=5000,
             dtype=get_dtype_mapping(chunk)
         )
-
         first = False
         del chunk
         gc.collect()
-    
+
     del resale
     gc.collect()
+
+    # Read back from SQL, generate _fp from SQL-stored values, write to temp table, then swap.
+    logging.info("Generating _fp from SQL-extracted transform data...")
+    _reset_temp_table(engine_hdb)
+    total = 0
+    for chunk in pd.read_sql(
+        "SELECT * FROM transform_resale_flat_price", con=engine_hdb, chunksize=chunk_size
+    ):
+        chunk_with_fp = dw.add_fingerprint_column(chunk)
+        total += len(chunk)
+        chunk_with_fp.to_sql(
+            TEMP_TABLE,
+            con=engine_hdb,
+            if_exists="append",
+            index=False,
+            method="multi",
+            chunksize=5000,
+            dtype=get_dtype_mapping(chunk_with_fp)
+        )
+        del chunk, chunk_with_fp
+        gc.collect()
+
+    _swap_temp_into_target(engine_hdb)
+    logging.info("transform_resale_prices: wrote %d rows with _fp — verifying...", total)
+
+    if not _verify_fps_from_db(mysql_conn_id, TARGET_TABLE):
+        raise RuntimeError(
+            f"transform_resale_prices: fingerprint verification failed on {TARGET_TABLE}"
+        )
+    logging.info("transform_resale_prices: all %d rows verified OK", total)
+
+    # Mark all months present in the final table as is_transformed = True.
+    ensure_tracking_table(mysql_conn_id)
+    months_df = pd.read_sql(
+        "SELECT DISTINCT DATE_FORMAT(month_and_year, '%%Y-%%m') AS m "
+        "FROM transform_resale_flat_price",
+        con=engine_hdb,
+    )
+    for m in months_df["m"].dropna():
+        _tracking_mark_done(mysql_conn_id, str(m), "is_transformed")
+    logging.info(
+        "transform_resale_prices: marked %d month(s) as is_transformed", len(months_df)
+    )
