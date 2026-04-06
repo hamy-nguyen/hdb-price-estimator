@@ -1,0 +1,43 @@
+---
+description: HDB Price Estimator repo layout, data flow, and component responsibilities for accurate answers about this project.
+alwaysApply: true
+---
+
+# HDB Price Estimator — project architecture (for AI)
+
+## Purpose
+
+End-to-end ML and analytics for **Singapore HDB resale prices**: ingest multi-source data into MySQL, clean/transform into **`transform_resale_flat_price`**, explore/train in notebooks, serve predictions via **FastAPI**, visualize via **Streamlit**.
+
+## Data flow (short)
+
+1. **Airflow `data_ingest`** (`airflow/dags/ingest_dag.py`) → MySQL **`raw_*`** (upsert + SHA-256 `_fp` via `helpers/data_watermarking.py`, logic in `helpers/dag_helpers.py`).
+2. **Airflow `data_clean`** (`clean_dag.py` + `helpers/clean_dag_helpers.py`) → **`clean_*`** (parallel tasks).
+3. **Airflow `data_transform`** (`transform_dag.py` + `helpers/transform_dag_helpers.py`) → joins + spatial features → **`transform_resale_flat_price`** (temp table swap).
+4. **Notebooks** under `notebooks/` — EDA, feature engineering, baselines (LR, ridge/DT, RF/XGBoost).
+5. **`api/`** — FastAPI: `app/schemas.py` + `app/model.py` **`FEATURE_COLUMNS`** must match trained `model.pkl`; `app/main.py` asserts schema parity at startup.
+6. **`web_application/streamlit.py`** (+ **`web_application/predict_api_params.py`**) — reads `transform_resale_flat_price` from MySQL; map + month filter + hosted `/predict` API (OneMap + payload builder).
+
+## Key paths
+
+| Area | Files |
+|------|--------|
+| Ingest | `airflow/dags/ingest_dag.py`, `helpers/dag_helpers.py`, `helpers/data_watermarking.py` |
+| Clean | `airflow/dags/clean_dag.py`, `helpers/clean_dag_helpers.py` |
+| Transform | `airflow/dags/transform_dag.py`, `helpers/transform_dag_helpers.py` |
+| Data files | `dataset/raw/` (tracked CSVs); `dataset/processed/` gitignored |
+| OneMap pull | `scripts/extract_onemap.py` (API → CSV in `dataset/raw/`) |
+| Adhoc clean script | `scripts/clean_raw_data.py` (SQLAlchemy; overlaps clean DAG conceptually) |
+| Inference | `api/app/main.py`, `model.py`, `schemas.py`, `api/models/model.pkl` |
+| UI | `web_application/streamlit.py`, `web_application/predict_api_params.py`, `.streamlit/config.toml` |
+| Docs | `README.md`, `api/README.md` |
+
+## Conventions
+
+- Database name commonly **`HDB_Data`**; Airflow connection **`mysql_default`**.
+- Root **`requirements.txt`** vs **`api/requirements.txt`** — install both when working on API + notebooks + Airflow.
+- When changing ML features, update **`FEATURE_COLUMNS`** in `api/app/model.py` and **`PredictRequest`** in `api/app/schemas.py` together, then retrain/export `model.pkl`.
+
+## Local-only full narrative
+
+A longer architecture write-up may exist at repo root as **`PROJECT_ARCHITECTURE.md`** (gitignored). If present, prefer it for exhaustive detail; this rule stays the committed summary.
