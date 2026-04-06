@@ -24,3 +24,7 @@ pyrightconfig.json
 .vscode/settings.json
 
 dataset/processed/
+.cursor/
+
+# Local notebook scratch
+testing.ipynb
