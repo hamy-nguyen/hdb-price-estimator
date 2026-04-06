@@ -18,8 +18,12 @@ hdb-price-estimator/
 │   ├── eda_places_of_interest.ipynb
 │   ├── feature_engineering_resale_flat_price.ipynb  # Feature engineering
 │   └── tourist_attraction_cleaning.ipynb
+├── web_application/
+│   ├── streamlit.py               # Dashboard: map, month filter, hosted /predict estimate
+│   └── predict_api_params.py      # OneMap + nearest-row payload builder for the API
 ├── scripts/
 │   ├── extract_onemap.py          # Extract demographics from OneMap API
+│   ├── onemap_address_search.py   # OneMap elastic search (used by predict_api_params)
 │   └── search_coord.py            # Geocode HDB addresses via OneMap
 ├── dataset/
 │   ├── raw/                       # Original CSV source files
@@ -234,6 +238,48 @@ To detect tampering: recompute the hash from the data columns and compare it to 
 Source configurations are defined in `airflow/dags/helpers/dag_helpers.py` → `SOURCES`.
 
 Each table has a defined **primary key** with VARCHAR lengths sized to actual data (verified against source datasets with headroom). See `PRIMARY_KEYS` in `dag_helpers.py` for the full mapping.
+
+## Streamlit dashboard
+
+The Streamlit app under `web_application/` loads resale transactions from MySQL, shows an interactive map coloured by price for the selected month, and can call the **hosted Hugging Face `/predict` API** using a postal-code–driven feature payload.
+
+### Prerequisites
+
+- **MySQL** with table **`transform_resale_flat_price`** populated (run your **transform** pipeline / DAG so rows include `latitude`, `longitude`, `resale_price`, and `month_and_year`).
+- **Python dependencies** from the repo root (includes Streamlit, Plotly, `mysql-connector-python`, `requests`, `python-dotenv`, `pyproj`):
+
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+- **Database credentials:** `web_application/streamlit.py` and `web_application/predict_api_params.py` connect with host `localhost`, user `airflow_user`, password `password`, database `HDB_Data`. Change those values in code if your local MySQL user differs.
+
+- **OneMap (for price estimate only):** create a **`.env` file at the repository root** (same level as `README.md`) with:
+
+  ```env
+  ONEMAP_EMAIL=your_onemap_account_email
+  ONEMAP_EMAIL_PASSWORD=your_onemap_password
+  ```
+
+  The estimate form uses OneMap search to geocode the postal code (or optional address hint), then picks the nearest row in `transform_resale_flat_price` to fill model features before calling the API.
+
+### Run the app
+
+From the **repository root**:
+
+```bash
+streamlit run web_application/streamlit.py
+```
+
+Streamlit prints a local URL (typically `http://localhost:8501`). Open it in your browser.
+
+### Using the UI
+
+1. **Map and month slider** — Choose a month; the map shows transactions in that month, coloured from low (green) to high (red) resale price. Pan and zoom as needed.
+2. **Estimated resale price (hosted API)** — Enter a **6-digit Singapore postal code**. Optionally add an **address hint** to refine the OneMap search. Choose **flat model** and **remaining lease (years)**; submit to build the request (OneMap → nearest DB row by distance → 16-field JSON) and **POST** to the configured inference URL. The response shows the predicted price and an expander with the JSON body sent to the API.
+3. **Raw table** — Expand **View raw table** to inspect all loaded rows from MySQL.
+
+If OneMap auth fails, check `.env` and that the app is started from a working directory where the repo root `.env` is visible to `scripts/onemap_address_search.py` (loaded when the prediction module runs).
 
 ## Troubleshooting
 
