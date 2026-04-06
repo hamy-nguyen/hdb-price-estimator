@@ -24,7 +24,7 @@ pyrightconfig.json
 .vscode/settings.json
 
 dataset/processed/
+.cursor/
 
-# Local architecture doc (generated / personal copy; Cursor rule in .cursor/rules/ is committed)
-PROJECT_ARCHITECTURE.md
+# Local notebook scratch
 testing.ipynb
