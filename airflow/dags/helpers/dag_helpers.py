@@ -1,17 +1,21 @@
 """
 Flexible extract and load helpers for data.gov.sg APIs and local CSVs.
 Supports: poll-download API, CKAN datastore_search API, local CSV files.
-Uses upsert (INSERT ... ON DUPLICATE KEY UPDATE) to preserve existing data
-and enable meaningful tamper detection via SHA-256 fingerprints.
+
+Static datasets are written once; subsequent runs skip when fingerprints are
+already valid.  resale_flat_price is ingested incrementally by calendar month
+and tracked in pipeline_tracking (month, is_ingested, is_cleaned, is_transformed).
 """
 
 import io
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import requests
+from dateutil.relativedelta import relativedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
@@ -37,26 +41,6 @@ def _http_session() -> requests.Session:
     session.mount("http://", adapter)
     return session
 
-PRIMARY_KEYS = {
-    "raw_tourist_attractions": {"objectid_1": 10},
-    "raw_carpark": {"car_park_no": 10},
-    "raw_resale_flat_price": {
-        "month": 10, "town": 20, "flat_type": 20, "block": 10,
-        "street_name": 30, "storey_range": 15, "floor_area_sqm": 10,
-        "lease_commence_date": 10,
-    },
-    "raw_hdb": {"blk_no": 10, "street": 40},
-    "raw_poi": {"place_id": 40},
-    "raw_bus_stops": {"busstopcode": 5},
-    "raw_bus_vol": {"month": 10, "day": 5, "hour": 5, "stop_id": 10},
-    "raw_bus_line": {"line": 10, "direction": 5, "sequence": 10},
-    "raw_mrt": {"name": 50, "line": 10},
-    "raw_onemap_planning_areas": {"planning_area": 40, "year": 10},
-    "raw_onemap_transport_school": {"planning_area": 40, "year": 10},
-    "raw_onemap_transport_work": {"planning_area": 40, "year": 10},
-    "raw_onemap_tenancy": {"planning_area": 40, "year": 10},
-    "raw_onemap_dwelling": {"planning_area": 40, "year": 10},
-}
 
 # Source configs: (api_type, dataset_id/resource_id, api_base or file_path)
 SOURCES = {
@@ -107,11 +91,6 @@ SOURCES = {
         "api_type": "csv_file",
         "file_path": "dataset/raw/mrt.csv",
         "table_name": "raw_mrt"
-    },
-    "planning_areas": {
-        "api_type": "csv_file",
-        "file_path": "dataset/raw/onemap_planning_areas.csv",
-        "table_name": "raw_onemap_planning_areas",
     },
     "transport_to_school": {
         "api_type": "csv_file",
@@ -335,112 +314,429 @@ def _flatten_geojson(df):
     return pd.DataFrame(rows)
 
 
-def watermark_extracted_data(extract_task_id: str, **kwargs) -> str:
+def _get_engine(mysql_conn_id: str):
+    """Return a SQLAlchemy engine for the given Airflow connection id."""
+    from sqlalchemy import create_engine
+    try:
+        from airflow.sdk.bases.hook import BaseHook
+    except ImportError:
+        from airflow.hooks.base import BaseHook
+    conn = BaseHook.get_connection(mysql_conn_id)
+    return create_engine(
+        f"mysql+pymysql://{conn.login}:{conn.password}"
+        f"@{conn.host}:{conn.port}/{conn.schema}"
+    )
+
+
+def get_dtype_mapping(df: pd.DataFrame) -> dict:
+    """Build an explicit SQLAlchemy dtype mapping for df.to_sql (shared by all helpers)."""
+    from sqlalchemy import Integer, Float, DateTime, Text
+    m = {}
+    for col, dtype in df.dtypes.items():
+        if pd.api.types.is_integer_dtype(dtype):
+            m[col] = Integer()
+        elif pd.api.types.is_float_dtype(dtype):
+            m[col] = Float()
+        elif pd.api.types.is_bool_dtype(dtype):
+            m[col] = Integer()
+        elif pd.api.types.is_datetime64_any_dtype(dtype):
+            m[col] = DateTime()
+        else:
+            m[col] = Text()
+    return m
+
+
+def _verify_fps_from_db(
+    mysql_conn_id: str,
+    table_name: str,
+    month_col: str | None = None,
+    month_val: str | None = None,
+) -> bool:
     """
-    Pull extract JSON from XCom, add per-row SHA-256 fingerprint column `_fp`,
-    return JSON for the load task.
+    Read rows from *table_name* (optionally filtered by month), recompute
+    SHA-256 fingerprints from non-_fp columns, and compare against the stored
+    _fp values.  Returns True when every row matches.
+    Reads in chunks of 10 000 to avoid loading large tables into memory at once.
     """
     from helpers import data_watermarking as dw
 
-    ti = kwargs["ti"]
-    json_str = ti.xcom_pull(task_ids=extract_task_id)
-    if not json_str:
-        raise ValueError(f"No data from extract task: {extract_task_id}")
+    db = _get_mysql_connection(mysql_conn_id)
+    with db.cursor() as cursor:
+        if not _table_exists(cursor, table_name):
+            _log.warning("_verify_fps_from_db: table=%r does not exist", table_name)
+            db.close()
+            return False
 
-    df = pd.read_json(io.StringIO(json_str))
-    if df.empty:
-        return df.to_json(date_format="iso", orient="records") or "[]"
+        if month_col and month_val:
+            cursor.execute(
+                f"SELECT * FROM `{table_name}` WHERE `{month_col}` = %s",
+                (month_val,),
+            )
+        else:
+            cursor.execute(f"SELECT * FROM `{table_name}`")
 
+        columns = [desc[0] for desc in cursor.description]
+        if dw.FINGERPRINT_COL not in columns:
+            _log.warning("_verify_fps_from_db: table=%r has no _fp column", table_name)
+            db.close()
+            return False
+
+        mismatches = 0
+        total = 0
+        while True:
+            rows = cursor.fetchmany(10_000)
+            if not rows:
+                break
+            chunk = pd.DataFrame(rows, columns=columns)
+            stored = chunk[dw.FINGERPRINT_COL]
+            df_data = chunk.drop(columns=[dw.FINGERPRINT_COL])
+            recomputed = df_data.apply(
+                lambda row: dw.row_fingerprint(row, exclude_cols={dw.FINGERPRINT_COL}),
+                axis=1,
+            )
+            mismatches += int((stored != recomputed).sum())
+            total += len(chunk)
+
+    db.close()
+
+    if total == 0:
+        _log.info("_verify_fps_from_db: table=%r — no rows to verify", table_name)
+        return True
+
+    if mismatches > 0:
+        _log.warning(
+            "_verify_fps_from_db: table=%r mismatches=%d/%d", table_name, mismatches, total
+        )
+        return False
+
+    _log.info("_verify_fps_from_db: table=%r rows=%d — all valid", table_name, total)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Pipeline tracking table  (resale_flat_price only)
+# ---------------------------------------------------------------------------
+
+
+def ensure_tracking_table(mysql_conn_id: str = "mysql_default") -> None:
+    """Create pipeline_tracking (resale_flat_price only, keyed by month) if needed.
+
+    Also drops the legacy `dataset` column if it still exists from a prior schema.
+    """
+    db = _get_mysql_connection(mysql_conn_id)
+    with db.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS `pipeline_tracking` (
+                `month`          VARCHAR(10)  NOT NULL,
+                `is_ingested`    TINYINT(1)   NOT NULL DEFAULT 0,
+                `is_cleaned`     TINYINT(1)   NOT NULL DEFAULT 0,
+                `is_transformed` TINYINT(1)   NOT NULL DEFAULT 0,
+                PRIMARY KEY (`month`)
+            )
+        """)
+        # Migration: remove legacy `dataset` column if it still exists
+        cursor.execute(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() "
+            "AND table_name = 'pipeline_tracking' "
+            "AND column_name = 'dataset'"
+        )
+        if cursor.fetchone()[0] > 0:
+            cursor.execute("ALTER TABLE `pipeline_tracking` DROP COLUMN `dataset`")
+    db.commit()
+    db.close()
+
+
+def _tracking_is_done(mysql_conn_id: str, month: str, stage: str) -> bool:
+    """Return True if the given month/stage is marked done in pipeline_tracking."""
+    db = _get_mysql_connection(mysql_conn_id)
+    with db.cursor() as cursor:
+        cursor.execute(
+            f"SELECT `{stage}` FROM `pipeline_tracking` WHERE `month` = %s",
+            (month,),
+        )
+        row = cursor.fetchone()
+    db.close()
+    return row is not None and row[0] == 1
+
+
+def _tracking_mark_done(mysql_conn_id: str, month: str, stage: str) -> None:
+    """Mark month/stage as done in pipeline_tracking (upsert)."""
+    db = _get_mysql_connection(mysql_conn_id)
+    with db.cursor() as cursor:
+        cursor.execute(
+            f"INSERT INTO `pipeline_tracking` (`month`, `{stage}`) "
+            f"VALUES (%s, 1) "
+            f"ON DUPLICATE KEY UPDATE `{stage}` = 1",
+            (month,),
+        )
+    db.commit()
+    db.close()
+
+
+def _tracking_get_pending(
+    mysql_conn_id: str,
+    stage: str,
+    prerequisite: str | None = None,
+    up_to_month: str | None = None,
+) -> list[str]:
+    """
+    Return months not yet done for *stage*, optionally filtered by prerequisite
+    and capped at *up_to_month* (inclusive, 'YYYY-MM' string comparison).
+    """
+    db = _get_mysql_connection(mysql_conn_id)
+    with db.cursor() as cursor:
+        conditions = [f"`{stage}` = 0"]
+        params: list = []
+        if prerequisite:
+            conditions.append(f"`{prerequisite}` = 1")
+        if up_to_month:
+            conditions.append("`month` <= %s")
+            params.append(up_to_month)
+        where = " AND ".join(conditions)
+        cursor.execute(
+            f"SELECT `month` FROM `pipeline_tracking` WHERE {where}",
+            params if params else (),
+        )
+        rows = cursor.fetchall()
+    db.close()
+    return [r[0] for r in rows]
+
+
+def get_previous_month() -> str:
+    """Return the previous calendar month as 'YYYY-MM'."""
+    return (datetime.now() - relativedelta(months=1)).strftime("%Y-%m")
+
+
+# ---------------------------------------------------------------------------
+# High-level ingest helpers (direct DB, no XCom)
+# ---------------------------------------------------------------------------
+
+def _ingest_df(df: pd.DataFrame, table_name: str, engine, if_exists: str = "replace") -> None:
+    """
+    Write *df* to *table_name* without a fingerprint, read it back from SQL,
+    add _fp from the SQL-extracted values, then write back with _fp.
+    This ensures fingerprints are always derived from what MySQL stores.
+    """
+    from helpers import data_watermarking as dw
+
+    df = df.copy()
     df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
     df = df.loc[:, ~df.columns.duplicated()]
-    df = df.astype(object).where(pd.notna(df), None)
-
     if dw.FINGERPRINT_COL in df.columns:
         df = df.drop(columns=[dw.FINGERPRINT_COL])
 
-    df = dw.add_fingerprint_column(df)
-    result = df.to_json(date_format="iso", orient="records")
-    if result is None:
-        raise RuntimeError("DataFrame.to_json returned None unexpectedly")
-    return result
+    df.to_sql(table_name, con=engine, if_exists=if_exists, index=False,
+              dtype=get_dtype_mapping(df))
+
+    df_sql = pd.read_sql(f"SELECT * FROM `{table_name}`", con=engine)
+    if dw.FINGERPRINT_COL in df_sql.columns:
+        df_sql = df_sql.drop(columns=[dw.FINGERPRINT_COL])
+    df_with_fp = dw.add_fingerprint_column(df_sql)
+    df_with_fp.to_sql(table_name, con=engine, if_exists="replace", index=False,
+                      dtype=get_dtype_mapping(df_with_fp))
+    _log.info("_ingest_df: table=%r rows=%d", table_name, len(df_with_fp))
 
 
-def upsert_to_mysql(
-    extract_task_id: str,
-    table_name: str,
+def _ingest_df_month(
+    df: pd.DataFrame, table_name: str, engine, month_col: str, month_val: str
+) -> None:
+    """
+    Append *df* (a single month's rows) into *table_name*, replacing any
+    existing rows for that month.  Generates _fp from the SQL read-back.
+    """
+    from sqlalchemy import text
+    from helpers import data_watermarking as dw
+
+    df = df.copy()
+    df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()]
+    if dw.FINGERPRINT_COL in df.columns:
+        df = df.drop(columns=[dw.FINGERPRINT_COL])
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"DELETE FROM `{table_name}` WHERE `{month_col}` = :m"),
+            {"m": month_val},
+        )
+    df.to_sql(table_name, con=engine, if_exists="append", index=False,
+              dtype=get_dtype_mapping(df))
+
+    df_sql = pd.read_sql(
+        f"SELECT * FROM `{table_name}`",
+        con=engine,
+        params=None,
+    )
+    # Filter to just-inserted month in memory (avoids raw SQL interpolation)
+    df_sql = df_sql[df_sql[month_col].astype(str) == month_val]
+    if dw.FINGERPRINT_COL in df_sql.columns:
+        df_sql = df_sql.drop(columns=[dw.FINGERPRINT_COL])
+    df_with_fp = dw.add_fingerprint_column(df_sql)
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"DELETE FROM `{table_name}` WHERE `{month_col}` = :m"),
+            {"m": month_val},
+        )
+    df_with_fp.to_sql(table_name, con=engine, if_exists="append", index=False,
+                      dtype=get_dtype_mapping(df_with_fp))
+    _log.info("_ingest_df_month: table=%r month=%s rows=%d", table_name, month_val, len(df_with_fp))
+
+
+def ingest_static_dataset(
+    source_key: str,
     mysql_conn_id: str = "mysql_default",
+    max_retries: int = 3,
     **kwargs,
 ) -> None:
     """
-    Upsert data into MySQL using INSERT ... ON DUPLICATE KEY UPDATE.
-    Creates the table with a PRIMARY KEY if it doesn't exist.
-    Existing rows are updated; new rows are inserted; untouched rows remain.
-    """
-    ti = kwargs["ti"]
-    json_str = ti.xcom_pull(task_ids=extract_task_id)
-    if not json_str:
-        raise ValueError(f"No data from extract task: {extract_task_id}")
+    Ingest a static dataset.
 
-    df = pd.read_json(io.StringIO(json_str))
-    if df.empty:
-        _log.warning("upsert_to_mysql: table=%r rows=0, skipping", table_name)
+    Skip immediately when fingerprints on the raw table are already valid —
+    this is the idempotency mechanism; no tracking table is used for static data.
+    On failure, retry up to *max_retries* times.
+    """
+    config = SOURCES[source_key]
+    table_name = config["table_name"]
+
+    if _verify_fps_from_db(mysql_conn_id, table_name):
+        _log.info("ingest_static_dataset: %s FPs valid — skipping", source_key)
         return
 
-    df.columns = [str(c).replace(" ", "_").lower() for c in df.columns]
-    df = df.loc[:, ~df.columns.duplicated()]
-    df = df.astype(object).where(pd.notna(df), None)
+    engine = _get_engine(mysql_conn_id)
+    try:
+        for attempt in range(1, max_retries + 1):
+            _log.info("ingest_static_dataset: %s — attempt %d/%d", source_key, attempt, max_retries)
 
-    _log.info("upsert_to_mysql: table=%r rows=%s", table_name, len(df))
+            json_str = extract_from_source(
+                api_type=config["api_type"],
+                dataset_id=config.get("dataset_id"),
+                resource_id=config.get("resource_id"),
+                api_base=config.get("api_base"),
+                file_path=config.get("file_path"),
+            )
+            df = pd.read_json(io.StringIO(json_str), dtype=False)
+            _ingest_df(df, table_name, engine, if_exists="replace")
 
-    pk_def = PRIMARY_KEYS.get(table_name, {})
-    pk_cols = list(pk_def.keys())
-    if not pk_cols:
-        _log.warning("upsert_to_mysql: no primary key defined for table=%r, falling back to full replace", table_name)
+            if _verify_fps_from_db(mysql_conn_id, table_name):
+                _log.info("ingest_static_dataset: %s verified (attempt %d)", source_key, attempt)
+                return
+
+            _log.warning(
+                "ingest_static_dataset: verification failed for %s (attempt %d/%d)",
+                source_key, attempt, max_retries,
+            )
+    finally:
+        engine.dispose()
+
+    raise RuntimeError(
+        f"ingest_static_dataset: {source_key} failed after {max_retries} attempts"
+    )
+
+
+def ingest_resale_incremental(
+    mysql_conn_id: str = "mysql_default",
+    max_retries: int = 3,
+    **kwargs,
+) -> None:
+    """
+    Ingest resale_flat_price incrementally by calendar month.
+
+    • First run  : writes the full dataset, verifies fingerprints for the target
+                   month, then bulk-registers all historical months in
+                   pipeline_tracking with a single DB connection.
+    • Monthly run: filters to the previous calendar month, skips if already
+                   tracked, otherwise inserts, generates _fp, verifies, marks done.
+    """
+    ensure_tracking_table(mysql_conn_id)
+
+    config = SOURCES["resale_flat_price"]
+    table_name = config["table_name"]
+    target_month = get_previous_month()
+
+    if (
+        _tracking_is_done(mysql_conn_id, target_month, "is_ingested")
+        and _verify_fps_from_db(mysql_conn_id, table_name)
+    ):
+        _log.info("ingest_resale_incremental: month=%s already ingested & verified — skipping", target_month)
+        return
 
     db = _get_mysql_connection(mysql_conn_id)
-
-    def _sanitize(val):
-        if val is None:
-            return None
-        if isinstance(val, float) and pd.isna(val):
-            return None
-        return str(val)
-
     with db.cursor() as cursor:
-        if not _table_exists(cursor, table_name):
-            col_defs = []
-            for c in df.columns:
-                if c in pk_def:
-                    col_defs.append(f"`{c}` VARCHAR({pk_def[c]}) NOT NULL")
-                else:
-                    col_defs.append(f"`{c}` TEXT")
-            create_sql = f"CREATE TABLE `{table_name}` ({', '.join(col_defs)}"
-            if pk_cols:
-                pk_str = ", ".join(f"`{c}`" for c in pk_cols)
-                create_sql += f", PRIMARY KEY ({pk_str})"
-            create_sql += ")"
-            cursor.execute(create_sql)
-            _log.info("upsert_to_mysql: created table=%r with PK=%s", table_name, pk_cols)
-
-        cols_str = ", ".join(f"`{c}`" for c in df.columns)
-        vals = ", ".join(["%s"] * len(df.columns))
-
-        if pk_cols:
-            non_pk_cols = [c for c in df.columns if c not in pk_cols]
-            update_clause = ", ".join(f"`{c}` = VALUES(`{c}`)" for c in non_pk_cols)
-            sql = (
-                f"INSERT INTO `{table_name}` ({cols_str}) VALUES ({vals}) "
-                f"ON DUPLICATE KEY UPDATE {update_clause}"
-            )
-        else:
-            sql = f"INSERT INTO `{table_name}` ({cols_str}) VALUES ({vals})"
-
-        rows_data = [
-            tuple(_sanitize(v) for v in row)
-            for _, row in df.iterrows()
-        ]
-        cursor.executemany(sql, rows_data)
-
-    db.commit()
-    _log.info("upsert_to_mysql: table=%r upserted %d rows", table_name, len(df))
+        is_first_run = not _table_exists(cursor, table_name)
     db.close()
+
+    engine = _get_engine(mysql_conn_id)
+    try:
+        for attempt in range(1, max_retries + 1):
+            _log.info(
+                "ingest_resale_incremental: month=%s — attempt %d/%d",
+                target_month, attempt, max_retries,
+            )
+
+            json_str = extract_from_source(
+                api_type=config["api_type"],
+                dataset_id=config["dataset_id"],
+                api_base=config["api_base"],
+            )
+            df_all = pd.read_json(io.StringIO(json_str), dtype=False)
+            df_all.columns = [str(c).replace(" ", "_").lower() for c in df_all.columns]
+
+            if df_all.empty:
+                _log.warning("ingest_resale_incremental: source returned no data")
+                return
+
+            if is_first_run:
+                # On first run, cap data to months <= target_month so we never
+                # ingest data for the current (incomplete) calendar month.
+                df_ingest = df_all[df_all["month"] <= target_month]
+                _log.info(
+                    "ingest_resale_incremental: first run — loading %d rows (≤ %s)",
+                    len(df_ingest), target_month,
+                )
+                _ingest_df(df_ingest, table_name, engine, if_exists="replace")
+            else:
+                df_month = df_all[df_all["month"] == target_month]
+                if df_month.empty:
+                    _log.warning("ingest_resale_incremental: no rows for month=%s", target_month)
+                    return
+                _log.info("ingest_resale_incremental: month=%s rows=%d", target_month, len(df_month))
+                _ingest_df_month(df_month, table_name, engine, month_col="month", month_val=target_month)
+
+            if _verify_fps_from_db(mysql_conn_id, table_name, month_col="month", month_val=target_month):
+                _tracking_mark_done(mysql_conn_id, target_month, "is_ingested")
+
+                if is_first_run and "month" in df_all.columns:
+                    other_months = [
+                        str(m) for m in df_ingest["month"].dropna().unique()
+                        if str(m) != target_month
+                    ]
+                    if other_months:
+                        db = _get_mysql_connection(mysql_conn_id)
+                        with db.cursor() as cursor:
+                            cursor.executemany(
+                                "INSERT INTO `pipeline_tracking` "
+                                "(`month`, `is_ingested`) VALUES (%s, 1) "
+                                "ON DUPLICATE KEY UPDATE `is_ingested` = 1",
+                                [(m,) for m in other_months],
+                            )
+                        db.commit()
+                        db.close()
+                    _log.info(
+                        "ingest_resale_incremental: registered %d historical months",
+                        len(other_months) + 1,
+                    )
+
+                _log.info("ingest_resale_incremental: month=%s verified (attempt %d)", target_month, attempt)
+                return
+
+            _log.warning(
+                "ingest_resale_incremental: verification failed for month=%s (attempt %d/%d)",
+                target_month, attempt, max_retries,
+            )
+    finally:
+        engine.dispose()
+
+    raise RuntimeError(
+        f"ingest_resale_incremental: month={target_month} failed after {max_retries} attempts"
+    )
