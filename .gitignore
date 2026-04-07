@@ -28,3 +28,7 @@ dataset/processed/
 
 # Local notebook scratch
 testing.ipynb
+
+# mlartifacts
+mlartifacts/
+mlflow.db
