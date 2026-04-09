@@ -336,10 +336,8 @@ def _flatten_geojson(df):
 def _get_engine(mysql_conn_id: str):
     """Return a SQLAlchemy engine for the given Airflow connection id."""
     from sqlalchemy import create_engine
-    try:
-        from airflow.sdk.bases.hook import BaseHook
-    except ImportError:
-        from airflow.hooks.base import BaseHook
+    #from airflow.sdk.bases.hook import BaseHook
+    from airflow.hooks.base import BaseHook
     conn = BaseHook.get_connection(mysql_conn_id)
     return create_engine(
         f"mysql+pymysql://{conn.login}:{conn.password}"
