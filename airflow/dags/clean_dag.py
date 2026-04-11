@@ -16,6 +16,11 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
+try:
+    from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+except ImportError:
+    from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+
 _DAGS_DIR = Path(__file__).resolve().parent
 if str(_DAGS_DIR) not in sys.path:
     sys.path.insert(0, str(_DAGS_DIR))
@@ -55,15 +60,23 @@ CLEAN_TASKS = {
 with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
-    schedule=None,  # trigger manually after data_ingest; set "@daily" once stable
+    schedule=None,  # triggered by data_ingest via TriggerDagRunOperator
     start_date=datetime.now() - timedelta(days=1),
     catchup=False,
     tags=["clean", "mysql"],
 ) as dag:
+    clean_tasks = []
     for source_key, fn in CLEAN_TASKS.items():
-        PythonOperator(
+        t = PythonOperator(
             task_id=f"clean_{source_key}",
             python_callable=fn,
             op_kwargs={"mysql_conn_id": MYSQL_CONN_ID},
         )
-    # No explicit dependencies → Airflow runs all tasks in parallel.
+        clean_tasks.append(t)
+    # All clean tasks run in parallel, then chain to transform.
+    trigger_transform = TriggerDagRunOperator(
+        task_id="trigger_data_transform",
+        trigger_dag_id="data_transform",
+        wait_for_completion=False,
+    )
+    clean_tasks >> trigger_transform

@@ -41,12 +41,11 @@ hdb-price-estimator/
 
 - Python 3.11+
 - MySQL 8.0+
-- [uv](https://github.com/astral-sh/uv) package manager (or `pip`)
 
 ### 1. Create and Activate Virtual Environment
 
 ```bash
-uv venv
+python -m venv .venv
 source .venv/bin/activate   # Linux/macOS
 # .venv\Scripts\activate    # Windows
 ```
@@ -54,13 +53,7 @@ source .venv/bin/activate   # Linux/macOS
 ### 2. Install Dependencies
 
 ```bash
-uv pip install apache-airflow apache-airflow-providers-mysql apache-airflow-providers-fab pymysql pandas
-```
-
-Or with pip:
-
-```bash
-pip install apache-airflow apache-airflow-providers-mysql apache-airflow-providers-fab pymysql pandas
+pip install -r requirements.txt
 ```
 
 ### 3. Set Up MySQL
@@ -100,10 +93,10 @@ mysql -u bt4301 -p -e "SHOW DATABASES;"
 
 ### 4. Configure Airflow
 
-Set `AIRFLOW_HOME` to the project directory:
+Set `AIRFLOW_HOME` to the project's airflow directory:
 
 ```bash
-export AIRFLOW_HOME=/path/to/hdb-price-estimator
+export AIRFLOW_HOME=/path/to/hdb-price-estimator/airflow
 ```
 
 Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) for persistence.
@@ -135,22 +128,35 @@ Replace `/path/to/hdb-price-estimator` with your actual project path.
 
 ### 5. Start Airflow
 
+In separate terminals (with venv activated and `AIRFLOW_HOME` exported):
+
+Option 1:
 ```bash
-source .venv/bin/activate
-export AIRFLOW_HOME=/path/to/hdb-price-estimator
 airflow standalone
 ```
 
+Option 2:
 ```bash
-export AIRFLOW_HOME=/root/hdb-price-estimator/airflow
 airflow scheduler &
 airflow dag-processor &
 airflow api-server
 ```
 
-Login credentials are printed on first startup and stored in `simple_auth_manager_passwords.json.generated`.
+Login credentials are printed on first startup and stored in `airflow/simple_auth_manager_passwords.json.generated`.
 
-### 6. Add MySQL Connection in Airflow
+Open the UI at http://localhost:8081.
+
+### 6. Start MLflow
+
+MLflow is used to track model training runs. Start the tracking server before triggering the pipeline:
+
+```bash
+python -m mlflow server --host 127.0.0.1 --port 9080
+```
+
+Leave this running in a separate terminal. The MLflow UI will be available at http://localhost:9080.
+
+### 7. Add MySQL Connection in Airflow
 
 In a separate terminal (with venv activated and `AIRFLOW_HOME` exported):
 
@@ -161,7 +167,9 @@ airflow connections add mysql_default \
 
 Replace `your_password` with the password you set in step 3.
 
-### 7. Run the DAG
+### 8. Trigger the Pipeline
+
+The `data_ingest` DAG runs automatically on the first of every month. To trigger manually via the Airflow UI:
 
 1. Open http://localhost:8081
 2. Toggle on the `data_ingest` DAG
@@ -174,112 +182,125 @@ airflow dags unpause data_ingest
 airflow dags trigger data_ingest
 ```
 
-## Pipeline Overview
+Triggering `data_ingest` is all that is needed — the remaining DAGs chain automatically as described below.
 
-DAG id: **`data_ingest`** · file: **`airflow/dags/ingest_dag.py`** · schedule: `@daily`
+## DataOps Pipeline
 
-### DAG Flow
+The pipeline is fully automated across four Airflow DAGs that chain sequentially. Triggering `data_ingest` kicks off the entire flow:
 
 ```
-verify_data_integrity → [extract_<source> → watermark_<source> → upsert_<source>] (per source)
+data_ingest (@monthly)
+  └──► data_clean
+         └──► data_transform
+                └──► data_train
 ```
 
-| Task | Description |
-|------|-------------|
-| `verify_data_integrity` | Reads existing tables, recomputes SHA-256 fingerprints, logs any tampered rows |
-| `extract_<source>` | Fetches data from API or local CSV |
-| `watermark_<source>` | Adds per-row SHA-256 fingerprint (`_fp` column) |
-| `upsert_<source>` | Inserts new rows, updates changed rows, preserves untouched rows |
+### data_ingest
 
-### Why Upsert Instead of Full Refresh
+**DAG:** `airflow/dags/ingest_dag.py` · **Schedule:** `@monthly` (1st of each month)
 
-The original pipeline used a **full refresh** (drop all tables → reload from scratch). This had two problems:
+Pulls raw data from data.gov.sg APIs and local CSV files into MySQL `raw_*` tables. Static datasets (HDB block info, MRT stations, POIs, bus stops, OneMap demographics, etc.) are ingested once and skipped on subsequent runs. Resale flat price data is ingested **incrementally** — only the previous calendar month is fetched on each run, so re-running the DAG never duplicates existing data.
 
-1. **Watermarking was meaningless.** Fingerprints were recalculated every run, so if someone tampered with data in MySQL between runs, it was silently overwritten — tampering was never detected.
-2. **Unnecessary downtime.** Tables were dropped and recreated even when data hadn't changed, making them temporarily unavailable to downstream queries.
+**Data integrity** is verified at every stage using SHA-256 row fingerprinting. After each upsert, every row's data columns are re-hashed and compared against the stored `_fp` column. Any mismatch triggers an automatic retry (up to 3 attempts) before the task fails. This ensures the data written to MySQL exactly matches what was extracted from the source.
 
-The reworked pipeline uses **upsert** (`INSERT ... ON DUPLICATE KEY UPDATE`):
-- **New rows** are inserted.
-- **Changed rows** are updated (including a new fingerprint).
-- **Unchanged rows** are left alone — their fingerprints persist.
+### data_clean
 
-This makes the `verify_data_integrity` step meaningful: it runs before each ingestion, recomputes fingerprints from the stored data, and compares them against the stored `_fp` values. Any mismatch means someone modified data directly in MySQL, and the DAG logs a `WARNING` with the affected table, row count, and row indices.
+**DAG:** `airflow/dags/clean_dag.py` · **Schedule:** triggered by `data_ingest`
 
-### How Watermarking Works
+Reads each `raw_*` table and applies source-specific cleaning rules (standardising column names and types, removing duplicates, converting coordinate systems, filtering out-of-bounds values, etc.) before writing to `clean_*` tables. All sources are cleaned in parallel. Fingerprint verification runs after each write.
 
-Each row gets a SHA-256 fingerprint (`_fp` column) computed from all its data columns:
+### data_transform
 
-1. Column values are serialized into canonical JSON (sorted keys, deterministic float rendering).
-2. The JSON string is hashed with SHA-256.
-3. The hash is stored alongside the row in MySQL.
+**DAG:** `airflow/dags/transform_dag.py` · **Schedule:** triggered by `data_clean`
 
-To detect tampering: recompute the hash from the data columns and compare it to the stored `_fp`. If they differ, the row was modified outside the pipeline.
+Joins all cleaned tables onto the resale flat price records through a sequential chain of geospatial enrichment steps:
 
-**Limitation:** The hashing algorithm is public (in `data_watermarking.py`), so a malicious actor with database and code access could recompute valid fingerprints after tampering. For stronger guarantees, HMAC with a secret key would be needed. The current approach is designed to detect accidental corruption or unauthorized edits by users who don't have access to the codebase.
+```
+joinable_resale_prices → join_hdb → join_mrt → join_poi → join_onemap → join_car_park → join_bus → join_tourist_attractions → transform_resale_prices
+```
 
-### Data Sources
+Each step uses Haversine / BallTree spatial matching to compute distance and count features (e.g. `dist_to_nearest_mrt_m`, `n_mrt_within_1km`) and demographic features from OneMap. The final output is `transform_resale_flat_price`, a single enriched table with 16 model-ready features per transaction.
 
-| Table | Source | Type |
-|-------|--------|------|
-| `raw_tourist_attractions` | data.gov.sg API | poll-download |
-| `raw_carpark` | data.gov.sg API | datastore_search |
-| `raw_resale_flat_price` | data.gov.sg API | poll-download |
-| `raw_hdb` | `dataset/raw/hdb.csv` | Local CSV |
-| `raw_poi` | `dataset/raw/poi.csv` | Local CSV |
-| `raw_bus_vol` | `dataset/raw/bus_vol.csv` | Local CSV |
-| `raw_bus_line` | `dataset/raw/bus_line.csv` | Local CSV |
-| `raw_mrt` | `dataset/raw/mrt.csv` | Local CSV |
-| `raw_onemap_planning_areas` | `dataset/raw/onemap_planning_areas.csv` | Local CSV |
-| `raw_onemap_transport_school` | `dataset/raw/onemap_transport_to_school.csv` | Local CSV |
-| `raw_onemap_transport_work` | `dataset/raw/onemap_transport_to_work.csv` | Local CSV |
-| `raw_onemap_tenancy` | `dataset/raw/onemap_tenancy.csv` | Local CSV |
-| `raw_onemap_dwelling` | `dataset/raw/onemap_dwelling.csv` | Local CSV |
+Fingerprint verification runs after each join step.
 
-Source configurations are defined in `airflow/dags/helpers/dag_helpers.py` → `SOURCES`.
+### pipeline_tracking
 
-Each table has a defined **primary key** with VARCHAR lengths sized to actual data (verified against source datasets with headroom). See `PRIMARY_KEYS` in `dag_helpers.py` for the full mapping.
+A `pipeline_tracking` table in MySQL records the processing state of every resale month:
 
-## Streamlit dashboard
+| Column | Description |
+|--------|-------------|
+| `month` | Calendar month (`YYYY-MM`) |
+| `is_ingested` | Set to `True` after successful ingestion |
+| `is_cleaned` | Set to `True` after successful cleaning |
+| `is_transformed` | Set to `True` after successful transformation |
 
-The Streamlit app under `web_application/` loads resale transactions from MySQL, shows an interactive map coloured by price for the selected month, and can call the **hosted Hugging Face `/predict` API** using a postal-code–driven feature payload.
+Before each stage, the DAG checks `pipeline_tracking` and skips any month already marked as processed. This means re-triggering a DAG mid-month is safe — already-processed months are not reprocessed. For example, if today is 11 April 2026, only the March 2026 data will be processed; prior months already present in the table are skipped.
 
-### Prerequisites
+## MLOps — Model Training
 
-- **MySQL** with table **`transform_resale_flat_price`** populated (run your **transform** pipeline / DAG so rows include `latitude`, `longitude`, `resale_price`, and `month_and_year`).
-- **Python dependencies** from the repo root (includes Streamlit, Plotly, `mysql-connector-python`, `requests`, `python-dotenv`, `pyproj`):
+### data_train
 
-  ```bash
-  pip install -r requirements.txt
-  ```
+**DAG:** `airflow/dags/train_dag.py` · **Schedule:** triggered by `data_transform`
 
-- **Database credentials:** `web_application/streamlit.py` and `web_application/predict_api_params.py` connect with host `localhost`, user `airflow_user`, password `password`, database `HDB_Data`. Change those values in code if your local MySQL user differs.
+Trains three candidate models against `transform_resale_flat_price` using an 80/20 train/test split:
 
-- **OneMap (for price estimate only):** create a **`.env` file at the repository root** (same level as `README.md`) with:
+| Model | Notes |
+|-------|-------|
+| Linear Regression | Baseline |
+| Ridge Regression | L2-regularised linear model |
+| XGBoost | Gradient-boosted trees |
 
-  ```env
-  ONEMAP_EMAIL=your_onemap_account_email
-  ONEMAP_EMAIL_PASSWORD=your_onemap_password
-  ```
+Each model is wrapped in a scikit-learn `Pipeline` (median imputation → standard scaling → model) so that all preprocessing is bundled inside the saved artefact.
 
-  The estimate form uses OneMap search to geocode the postal code (or optional address hint), then picks the nearest row in `transform_resale_flat_price` to fill model features before calling the API.
+Every run is logged to MLflow (experiment: **`HDB Resale Price Prediction: Auto Training`**) with metrics (RMSE, MAE, MAPE, R²) and the full pipeline artefact. The run with the lowest test RMSE is tagged `best_model=true` in MLflow for easy identification in the UI.
 
-### Run the app
+The winning pipeline is saved as a pickle to:
 
-From the **repository root**:
+```
+api/models/model.pkl
+```
+
+After saving, the DAG calls `POST /reload-model` on the FastAPI server so the live API hot-swaps to the new model without a restart.
+
+### Viewing MLflow Results
+
+With the MLflow server running at http://localhost:9080, open the **`HDB Resale Price Prediction: Auto Training`** experiment to compare all runs across months, inspect per-model metrics, and identify which model won each retraining cycle.
+
+## DevOps - Application
+
+### Backend (FastAPI)
+
+The inference API serves predictions from the trained model pickle at `api/models/model.pkl`.
+
+```bash
+cd api
+uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload
+```
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Returns `{"status": "ok", "mode": "live"\|"dummy"}` |
+| `/predict` | POST | Accepts 16 features, returns predicted resale price |
+| `/reload-model` | POST | Hot-swaps the in-memory model from disk (called automatically by `data_train`) |
+
+If `api/models/model.pkl` is not found, the API starts in **dummy mode** and returns a fixed placeholder price of $500,000 until a model is available.
+
+### Frontend (Streamlit)
 
 ```bash
 streamlit run web_application/streamlit.py
 ```
 
-Streamlit prints a local URL (typically `http://localhost:8501`). Open it in your browser.
+Open http://localhost:8501 in your browser.
 
-### Using the UI
+The dashboard shows an interactive map of resale transactions coloured by price for the selected month. The price estimator form accepts a postal code and flat details, geocodes the address via OneMap, looks up nearby HDB location features, and calls the local `/predict` API.
 
-1. **Map and month slider** — Choose a month; the map shows transactions in that month, coloured from low (green) to high (red) resale price. Pan and zoom as needed.
-2. **Estimated resale price (hosted API)** — Enter a **6-digit Singapore postal code**. Optionally add an **address hint** to refine the OneMap search. Choose **flat model** and **remaining lease (years)**; submit to build the request (OneMap → nearest DB row by distance → 16-field JSON) and **POST** to the configured inference URL. The response shows the predicted price and an expander with the JSON body sent to the API.
-3. **Raw table** — Expand **View raw table** to inspect all loaded rows from MySQL.
+**OneMap credentials** are required for the price estimator. Add to a `.env` file at the repository root:
 
-If OneMap auth fails, check `.env` and that the app is started from a working directory where the repo root `.env` is visible to `scripts/onemap_address_search.py` (loaded when the prediction module runs).
+```env
+ONEMAP_EMAIL=your_onemap_account_email
+ONEMAP_EMAIL_PASSWORD=your_onemap_password
+```
 
 ## Troubleshooting
 

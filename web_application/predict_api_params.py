@@ -10,6 +10,7 @@ Flow (same idea as testing.ipynb):
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,10 @@ MYSQL_DB = "HDB_Data"
 
 R_EARTH_M = 6_371_000.0
 
-# Hosted FastAPI inference (Hugging Face Space) — POST /predict — 16 features only
-PREDICT_API_URL = "https://hamynguyen-hdb-price-estimator.hf.space/predict"
+# Local FastAPI inference — POST /predict — 16 features only.
+# Override via PREDICT_API_URL env var to point at a different host.
+import os as _os
+PREDICT_API_URL = _os.getenv("PREDICT_API_URL", "http://localhost:7860/predict")
 
 HF_API_16_KEYS = [
     "flat_model",
@@ -46,14 +49,16 @@ HF_API_16_KEYS = [
 ]
 
 HF_INT_KEYS = {
-    "flat_model",
-    "town",
+    # flat_model and town are strings (e.g. 'Apartment', 'Jurong West') — excluded.
     "n_mrt_within_1km",
     "n_bus_stop_within_1km",
     "month_index",
     "n_food_within_1km",
     "n_supermarket_within_1km",
 }
+
+# Keys whose values must be passed as raw strings (read directly from the transform row).
+HF_STR_KEYS = {"town"}
 
 # UI / API encoding: integer code = index in this tuple (must match training label order if used).
 FLAT_MODEL_OPTIONS: tuple[str, ...] = (
@@ -80,9 +85,60 @@ FLAT_MODEL_OPTIONS: tuple[str, ...] = (
     "Premium Apartment Loft",
 )
 
+# Keys derived from the nearest transform row (location / building-level features).
+# flat_model, remaining_lease_years, storey_mid, floor_area_sqm, month_index are user-provided.
 HF_KEYS_FROM_ROW: tuple[str, ...] = tuple(
-    k for k in HF_API_16_KEYS if k not in ("flat_model", "remaining_lease_years")
+    k for k in HF_API_16_KEYS
+    if k not in ("flat_model", "remaining_lease_years", "storey_mid", "floor_area_sqm", "month_index")
 )
+
+
+DATASET_BASE_YEAR = 2017
+DATASET_BASE_MONTH = 1  # earliest resale transaction in transform_resale_flat_price
+
+
+def month_index_from_ym(year: int, month: int) -> int:
+    """
+    Convert a year/month to the month_index feature used during training.
+    Formula mirrors transform_dag_helpers.py:
+        (year - min_year) * 12 + (month - min_month)
+    where the minimum month in the dataset is 2017-01 → index 0.
+    """
+    return (year - DATASET_BASE_YEAR) * 12 + (month - DATASET_BASE_MONTH)
+
+
+def sale_month_options() -> list[str]:
+    """
+    Return month labels from Jan 2017 up to (and including) last month,
+    formatted as 'YYYY-MM', newest first.
+    """
+    now = datetime.now()
+    # Last month
+    if now.month == 1:
+        end_year, end_month = now.year - 1, 12
+    else:
+        end_year, end_month = now.year, now.month - 1
+
+    options = []
+    y, m = end_year, end_month
+    while (y, m) >= (2017, 1):
+        options.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    return options
+
+# Standard HDB storey ranges → midpoint value used as the storey_mid feature.
+# Label shown in the UI → storey_mid sent to the model.
+STOREY_RANGE_OPTIONS: dict[str, int] = {
+    "Floor 1-3":   2,  "Floor 4-6":   5,  "Floor 7-9":   8,
+    "Floor 10-12": 11, "Floor 13-15": 14, "Floor 16-18": 17,
+    "Floor 19-21": 20, "Floor 22-24": 23, "Floor 25-27": 26,
+    "Floor 28-30": 29, "Floor 31-33": 32, "Floor 34-36": 35,
+    "Floor 37-39": 38, "Floor 40-42": 41, "Floor 43-45": 44,
+    "Floor 46-48": 47, "Floor 49-51": 50,
+}
 
 
 def flat_model_option_to_int(label: str) -> int:
@@ -102,12 +158,11 @@ HF_DEFAULTS: dict[str, float | int] = {
     "max_floor_lvl": 15.0,
     "total_dwelling_units": 200.0,
     "storey_mid": 8.0,
-    "town": 10,
+    "town": "Jurong West",
     "dist_to_nearest_mrt_m": 450.0,
     "n_mrt_within_1km": 2,
     "dist_to_nearest_bus_stop_m": 80.0,
     "n_bus_stop_within_1km": 15,
-    "month_index": 120,
     "dist_to_food_m": 150.0,
     "n_food_within_1km": 10,
     "dist_to_supermarket_m": 250.0,
@@ -265,31 +320,7 @@ def _pool_scalar(pool: pd.DataFrame, key: str) -> float | None:
     return float(m) if pd.notna(m) else None
 
 
-def _month_index_from_row(row: pd.Series, pool: pd.DataFrame) -> int:
-    if "month_index" in row.index and pd.notna(row["month_index"]):
-        try:
-            return int(round(float(row["month_index"])))
-        except (TypeError, ValueError):
-            pass
-    pm = _pool_scalar(pool, "month_index")
-    if pm is not None:
-        return int(round(pm))
-    y = float(pool["year"].median()) if "year" in pool.columns else 2000.0
-    mo = float(pool["month"].median()) if "month" in pool.columns else 1.0
-    if "year" in row.index and pd.notna(row["year"]):
-        try:
-            y = float(row["year"])
-        except (TypeError, ValueError):
-            pass
-    if "month" in row.index and pd.notna(row["month"]):
-        try:
-            mo = float(row["month"])
-        except (TypeError, ValueError):
-            pass
-    return int((int(y) - 1990) * 12 + (int(mo) - 1))
-
-
-def _value_for_key(row: pd.Series, pool: pd.DataFrame, key: str) -> float | int:
+def _value_for_key(row: pd.Series, pool: pd.DataFrame, key: str) -> float | int | str:
     default = HF_DEFAULTS[key]
     raw = row[key] if key in row.index else None
     if raw is None or (isinstance(raw, (float, np.floating)) and np.isnan(raw)) or pd.isna(raw):
@@ -298,8 +329,8 @@ def _value_for_key(row: pd.Series, pool: pd.DataFrame, key: str) -> float | int:
             raw = pv
         else:
             raw = default
-    if key == "month_index":
-        return _month_index_from_row(row, pool)
+    if key in HF_STR_KEYS:
+        return str(raw)
     if key in HF_INT_KEYS:
         try:
             return int(round(float(raw)))
@@ -326,13 +357,43 @@ def build_hf16_payload_from_row(
     matched_row: pd.Series,
     pool: pd.DataFrame,
     *,
-    flat_model: int,
+    flat_model: str,
+    floor_area_sqm: float,
+    storey_mid: float,
     remaining_lease_years: float,
+    month_index: int,
 ) -> dict[str, Any]:
-    """Merge row-derived fields with caller-supplied `flat_model` and `remaining_lease_years`."""
+    """Merge location features from the nearest row with all user-supplied flat fields."""
     partial = build_hf_payload_from_row_match(matched_row, pool)
-    partial["flat_model"] = int(flat_model)
+    partial["flat_model"] = str(flat_model)
+    partial["floor_area_sqm"] = float(floor_area_sqm)
+    partial["storey_mid"] = float(storey_mid)
     partial["remaining_lease_years"] = float(remaining_lease_years)
+    partial["month_index"] = int(month_index)
+    return {k: partial[k] for k in HF_API_16_KEYS}
+
+
+def _pool_only_payload(
+    pool: pd.DataFrame,
+    *,
+    flat_model: str,
+    floor_area_sqm: float,
+    storey_mid: float,
+    remaining_lease_years: float,
+    month_index: int,
+) -> dict[str, Any]:
+    """
+    Fallback when no nearby row exists: build payload from dataset-wide medians
+    for all location features, combined with the user-supplied flat fields.
+    """
+    empty_row = pd.Series(dtype=object)
+    pool_l = normalize_dataframe_columns(pool)
+    partial = {k: _value_for_key(empty_row, pool_l, k) for k in HF_KEYS_FROM_ROW}
+    partial["flat_model"] = str(flat_model)
+    partial["floor_area_sqm"] = float(floor_area_sqm)
+    partial["storey_mid"] = float(storey_mid)
+    partial["remaining_lease_years"] = float(remaining_lease_years)
+    partial["month_index"] = int(month_index)
     return {k: partial[k] for k in HF_API_16_KEYS}
 
 
@@ -340,30 +401,37 @@ def build_hdb_predict_payload(
     postal_code: str,
     address: str | None = None,
     *,
-    flat_model: int,
+    flat_model: str,
+    floor_area_sqm: float,
+    storey_mid: float,
     remaining_lease_years: float,
+    month_index: int,
     token: str | None = None,
     resale_df: pd.DataFrame | None = None,
     max_match_m: float = 75.0,
-    widen_match_m: float | None = 500.0,
-) -> dict[str, Any]:
+    widen_match_m: float | None = 2000.0,
+) -> tuple[dict[str, Any], bool]:
     """
-    OneMap → first hit WGS84 → nearest row in `transform_resale_flat_price` → 14 derived fields
-    plus required **`flat_model`** and **`remaining_lease_years`** from the caller.
+    OneMap → WGS84 → nearest HDB row for location features → 16-field predict payload.
 
-    Parameters
-    ----------
-    resale_df :
-        Optional pre-loaded transform table; if None, `load_data()` is used.
-    max_match_m / widen_match_m :
-        Haversine radius (metres), same behaviour as testing.ipynb.
+    Location features (MRT/bus/food distances etc.) come from the closest resale
+    transaction within widen_match_m.  If nothing is found at any radius, dataset-wide
+    medians are used as a fallback so that any valid Singapore address works.
+
+    Flat-specific fields (flat_model, floor_area_sqm, storey_mid, remaining_lease_years)
+    always come from the caller.
+
+    Returns
+    -------
+    payload : dict[str, Any]   — 16-field body ready for POST /predict
+    used_fallback : bool       — True when dataset medians were used (no nearby row found)
     """
     q = search_query_for_onemap(postal_code, address)
     raw: dict[str, Any] = search_onemap(q, token=token)
     search_df = onemap_response_to_dataframe(raw)
 
     if search_df.empty:
-        raise ValueError("OneMap returned no results for this query.")
+        raise ValueError("OneMap returned no results for this postal code / address.")
 
     lat0 = float(pd.to_numeric(search_df.iloc[0]["latitude_wgs84"], errors="coerce"))
     lon0 = float(pd.to_numeric(search_df.iloc[0]["longitude_wgs84"], errors="coerce"))
@@ -382,16 +450,21 @@ def build_hdb_predict_payload(
         max_distance_m=max_match_m,
         widen_to_m=widen_match_m,
     )
+
+    user_fields = dict(
+        flat_model=flat_model,
+        floor_area_sqm=floor_area_sqm,
+        storey_mid=storey_mid,
+        remaining_lease_years=remaining_lease_years,
+        month_index=month_index,
+    )
+
     if near.empty:
-        raise ValueError(
-            "No transform_resale_flat_price rows within search radius; "
-            "check lat/lon columns or increase widen_match_m."
-        )
+        # No HDB transactions found near this address — use dataset medians for
+        # location features.  Prediction is still valid but less localised.
+        payload = _pool_only_payload(resale_n, **user_fields)
+        return payload, True
 
     template = near.iloc[0].drop(labels=["_match_distance_m"], errors="ignore")
-    return build_hf16_payload_from_row(
-        template,
-        resale_n,
-        flat_model=flat_model,
-        remaining_lease_years=remaining_lease_years,
-    )
+    payload = build_hf16_payload_from_row(template, resale_n, **user_fields)
+    return payload, False

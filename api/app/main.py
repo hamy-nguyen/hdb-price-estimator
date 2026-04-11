@@ -44,3 +44,15 @@ def health():
 def predict(request: PredictRequest):
     price = model.predict(request.model_dump())
     return PredictResponse(predicted_price=price, is_dummy=model._is_dummy)
+
+
+@app.post("/reload-model")
+def reload_model():
+    """
+    Hot-swap the in-memory model by re-reading the pickle from MODEL_PATH.
+    Called automatically by the Airflow training DAG after a new model is
+    written.  Safe to call manually to pick up a model file update without
+    restarting the server.
+    """
+    model.load_model()
+    return {"status": "ok", "mode": "dummy" if model._is_dummy else "live"}
