@@ -1,4 +1,3 @@
-<img width="1805" height="846" alt="Screenshot 2026-04-11 at 10 43 12 PM" src="https://github.com/user-attachments/assets/74baf3b1-58d3-4653-9c2c-43272b46d47f" />
 # hdb-price-estimator
 
 Smart HDB Fair Value Estimation Platform: An end-to-end ML system for predicting Singapore HDB resale prices using engineered features from transaction data, geospatial context, and demographics.
