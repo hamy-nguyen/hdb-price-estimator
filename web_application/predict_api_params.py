@@ -10,6 +10,7 @@ Flow (same idea as testing.ipynb):
 from __future__ import annotations
 
 import importlib.util
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -18,16 +19,22 @@ import mysql.connector
 import numpy as np
 import pandas as pd
 import pyproj
+from dotenv import load_dotenv
 
-# Backend config (not visible): MySQL database name for the data connection
-MYSQL_DB = "HDB_Data"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+# override=True: repo `.env` wins over a stale `export PREDICT_API_URL=http://localhost:7860/predict` in the shell.
+load_dotenv(_REPO_ROOT / ".env", override=True)
+
+# MySQL for map / OneMap matching (same as README: MYSQL_* in project `.env`)
+MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
+MYSQL_USER = os.getenv("MYSQL_USER", "bt4301")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "password")
+MYSQL_DB = os.getenv("MYSQL_DATABASE", "HDB_Data")
 
 R_EARTH_M = 6_371_000.0
 
-# Local FastAPI inference — POST /predict — 16 features only.
-# Override via PREDICT_API_URL env var to point at a different host.
-import os as _os
-PREDICT_API_URL = _os.getenv("PREDICT_API_URL", "http://localhost:7860/predict")
+# Hosted POST /predict (change here to point at another API, e.g. local http://127.0.0.1:7860/predict).
+PREDICT_API_URL = "https://hamynguyen-hdb-price-estimator.hf.space/predict"
 
 HF_API_16_KEYS = [
     "flat_model",
@@ -190,9 +197,9 @@ search_onemap = _load_search_onemap()
 
 def load_data() -> pd.DataFrame:
     conn = mysql.connector.connect(
-        host="localhost",
-        user="airflow_user",
-        password="password",
+        host=MYSQL_HOST,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
         database=MYSQL_DB,
     )
     try:

@@ -6,9 +6,13 @@ import plotly.express as px
 import requests
 
 from predict_api_params import (
-    STOREY_RANGE_OPTIONS,
     FLAT_MODEL_OPTIONS,
+    MYSQL_DB,
+    MYSQL_HOST,
+    MYSQL_PASSWORD,
+    MYSQL_USER,
     PREDICT_API_URL,
+    STOREY_RANGE_OPTIONS,
     build_hdb_predict_payload,
     month_index_from_ym,
     sale_month_options,
@@ -20,9 +24,6 @@ st.set_page_config(layout="wide", page_title="HDB Resale Price Prediction Dashbo
 # Main header — top of the page (large title text)
 st.title("HDB Resale Price Prediction Dashboard")
 
-# Backend config (not visible): MySQL database name for the data connection
-MYSQL_DB = "HDB_Data"
-
 # Map defaults (not visible): used only by the interactive map component below
 SG_CENTER = dict(lat=1.3521, lon=103.8198)
 SG_BOUNDS = dict(west=103.6, east=104.1, south=1.15, north=1.48)
@@ -31,9 +32,9 @@ SG_BOUNDS = dict(west=103.6, east=104.1, south=1.15, north=1.48)
 @st.cache_data(ttl=60)
 def load_data():
     conn = mysql.connector.connect(
-        host="localhost",
-        user="airflow_user",
-        password="password",
+        host=MYSQL_HOST,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
         database=MYSQL_DB,
     )
     try:
