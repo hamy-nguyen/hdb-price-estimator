@@ -148,7 +148,7 @@ Deployment is **automated via GitHub Actions** (`.github/workflows/deploy-hf.yml
 **How it works:**
 
 1. Push changes to `main` (e.g. updated model, code fix)
-2. GitHub Actions checks out the repo and runs `git subtree push --prefix=api` to the HF Space
+2. GitHub Actions checks out the repo and uses `huggingface_hub.upload_folder()` to upload `api/` to the HF Space (handles binary model files correctly)
 3. HF auto-rebuilds the Docker image and restarts the Space
 
 **One-time setup — add HF token as a GitHub secret:**
