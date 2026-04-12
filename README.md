@@ -295,7 +295,7 @@ Open http://localhost:8501 in your browser.
 
 The dashboard shows an interactive map of resale transactions coloured by price for the selected month. The price estimator form accepts a postal code and flat details, geocodes the address via OneMap, looks up nearby HDB location features, and calls the local `/predict` API.
 
-<img width="1805" height="846" alt="Screenshot 2026-04-11 at 10 43 12 PM" src="https://github.com/user-attachments/assets/c954af01-e637-46f1-a289-783d978515d4" />
+<img width="1810" height="891" alt="Screenshot 2026-04-12 at 3 36 34 PM" src="https://github.com/user-attachments/assets/2d3354d0-9aa3-4dfa-98f6-46317c9c2bbb" />
 
 **OneMap credentials** are required for the price estimator. Add to a `.env` file at the repository root:
 
