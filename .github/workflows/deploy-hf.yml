@@ -13,13 +13,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Push api/ to Hugging Face Spaces
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install huggingface_hub
+        run: pip install huggingface_hub
+
+      - name: Upload api/ to Hugging Face Spaces
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git config user.email "github-actions@github.com"
-          git config user.name "GitHub Actions"
-          git push https://hamynguyen:$HF_TOKEN@huggingface.co/spaces/hamynguyen/hdb-price-estimator $(git subtree split --prefix=api main):main --force
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.upload_folder(
+              folder_path="api",
+              repo_id="hamynguyen/hdb-price-estimator",
+              repo_type="space",
+              token=os.environ["HF_TOKEN"],
+          )
+          EOF
