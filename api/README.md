@@ -1,3 +1,12 @@
+---
+title: HDB Price Estimator
+emoji: 🏠
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # HDB Price Estimator — Inference API
 
 A FastAPI inference server that accepts pre-engineered HDB resale flat features and returns a predicted resale price.
