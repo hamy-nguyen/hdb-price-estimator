@@ -70,7 +70,7 @@ docker run -p 8000:8000 -v $(pwd)/models:/app/models hdb-api
 
 If no `model.pkl` is found at startup, the server runs in **dummy mode** — all `/predict` calls return `500000.0`. The `/health` endpoint reports which mode is active.
 
-To activate the real model, drop `model.pkl` into `api/models/`, then restart the server.
+To activate the real model, drop `model.pkl` into `api/models/`, and restart the server.
 
 ---
 
