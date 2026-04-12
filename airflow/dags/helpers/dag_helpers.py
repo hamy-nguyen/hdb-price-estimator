@@ -41,25 +41,6 @@ def _http_session() -> requests.Session:
     session.mount("http://", adapter)
     return session
 
-PRIMARY_KEYS = {
-    "raw_tourist_attractions": {"objectid_1": 10},
-    "raw_carpark": {"car_park_no": 10},
-    "raw_resale_flat_price": {
-        "month": 10, "town": 20, "flat_type": 20, "block": 10,
-        "street_name": 30, "storey_range": 15, "floor_area_sqm": 10,
-        "lease_commence_date": 10,
-    },
-    "raw_hdb": {"blk_no": 10, "street": 40},
-    "raw_poi": {"place_id": 40},
-    "raw_bus_stops": {"busstopcode": 5},
-    "raw_bus_vol": {"month": 10, "day": 5, "hour": 5, "stop_id": 10},
-    "raw_bus_line": {"line": 10, "direction": 5, "sequence": 10},
-    "raw_mrt": {"name": 50, "line": 10},
-    "raw_onemap_transport_school": {"planning_area": 40, "year": 10},
-    "raw_onemap_transport_work": {"planning_area": 40, "year": 10},
-    "raw_onemap_tenancy": {"planning_area": 40, "year": 10},
-    "raw_onemap_dwelling": {"planning_area": 40, "year": 10},
-}
 
 # Source configs: (api_type, dataset_id/resource_id, api_base or file_path)
 SOURCES = {
@@ -336,8 +317,10 @@ def _flatten_geojson(df):
 def _get_engine(mysql_conn_id: str):
     """Return a SQLAlchemy engine for the given Airflow connection id."""
     from sqlalchemy import create_engine
-    #from airflow.sdk.bases.hook import BaseHook
-    from airflow.hooks.base import BaseHook
+    try:
+        from airflow.sdk.bases.hook import BaseHook
+    except ImportError:
+        from airflow.hooks.base import BaseHook
     conn = BaseHook.get_connection(mysql_conn_id)
     return create_engine(
         f"mysql+pymysql://{conn.login}:{conn.password}"
