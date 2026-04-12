@@ -131,6 +131,27 @@ curl -s -X POST http://localhost:8000/predict \
 
 ---
 
+## Deploying to Hugging Face Spaces
+
+Deployment is **automated via GitHub Actions** (`.github/workflows/deploy-hf.yml`). Every push to `main` that touches any file under `api/` automatically redeploys the Space — no manual steps needed.
+
+**How it works:**
+1. Push changes to `main` (e.g. updated model, code fix)
+2. GitHub Actions checks out the repo and runs `git subtree push --prefix=api` to the HF Space
+3. HF auto-rebuilds the Docker image and restarts the Space
+
+**One-time setup — add HF token as a GitHub secret:**
+1. Generate a **write** access token at huggingface.co → Settings → Access Tokens
+2. In the GitHub repo → Settings → Secrets and variables → Actions → **New repository secret**
+3. Name: `HF_TOKEN`, Value: your token
+
+**Manual redeploy** (if needed, run from repo root):
+```bash
+git subtree push --prefix=api huggingface main
+```
+
+---
+
 ## Interactive Docs
 
 FastAPI auto-generates Swagger UI at:
