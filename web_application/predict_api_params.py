@@ -52,7 +52,7 @@ HF_API_16_KEYS = [
     "dist_to_food_m",
     "n_food_within_1km",
     "dist_to_supermarket_m",
-    "n_supermarket_within_1km",
+    "n_supermarket_within_1km"
 ]
 
 HF_INT_KEYS = {
@@ -61,7 +61,7 @@ HF_INT_KEYS = {
     "n_bus_stop_within_1km",
     "month_index",
     "n_food_within_1km",
-    "n_supermarket_within_1km",
+    "n_supermarket_within_1km"
 }
 
 # Keys whose values must be passed as raw strings (read directly from the transform row).
@@ -89,7 +89,7 @@ FLAT_MODEL_OPTIONS: tuple[str, ...] = (
     "Premium Maisonette",
     "Improved-Maisonette",
     "Terrace",
-    "Premium Apartment Loft",
+    "Premium Apartment Loft"
 )
 
 # Keys derived from the nearest transform row (location / building-level features).
@@ -144,7 +144,7 @@ STOREY_RANGE_OPTIONS: dict[str, int] = {
     "Floor 19-21": 20, "Floor 22-24": 23, "Floor 25-27": 26,
     "Floor 28-30": 29, "Floor 31-33": 32, "Floor 34-36": 35,
     "Floor 37-39": 38, "Floor 40-42": 41, "Floor 43-45": 44,
-    "Floor 46-48": 47, "Floor 49-51": 50,
+    "Floor 46-48": 47, "Floor 49-51": 50
 }
 
 
