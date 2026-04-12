@@ -22,4 +22,4 @@ jobs:
         run: |
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
-          git subtree push --prefix=api https://hamynguyen:$HF_TOKEN@huggingface.co/spaces/hamynguyen/hdb-price-estimator main
+          git push https://hamynguyen:$HF_TOKEN@huggingface.co/spaces/hamynguyen/hdb-price-estimator $(git subtree split --prefix=api main):main --force
