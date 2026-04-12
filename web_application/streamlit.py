@@ -7,19 +7,22 @@ import requests
 
 from predict_api_params import (
     FLAT_MODEL_OPTIONS,
+    MYSQL_DB,
+    MYSQL_HOST,
+    MYSQL_PASSWORD,
+    MYSQL_USER,
     PREDICT_API_URL,
+    STOREY_RANGE_OPTIONS,
     build_hdb_predict_payload,
-    flat_model_option_to_int,
+    month_index_from_ym,
+    sale_month_options,
 )
 
 # App shell: page title, layout, browser tab — affects the whole window
-st.set_page_config(layout="wide", page_title="HDB resale dashboard")
+st.set_page_config(layout="wide", page_title="HDB Resale Price Prediction Dashboard")
 
 # Main header — top of the page (large title text)
-st.title("HDB resale dashboard")
-
-# Backend config (not visible): MySQL database name for the data connection
-MYSQL_DB = "HDB_Data"
+st.title("HDB Resale Price Prediction Dashboard")
 
 # Map defaults (not visible): used only by the interactive map component below
 SG_CENTER = dict(lat=1.3521, lon=103.8198)
@@ -29,9 +32,9 @@ SG_BOUNDS = dict(west=103.6, east=104.1, south=1.15, north=1.48)
 @st.cache_data(ttl=60)
 def load_data():
     conn = mysql.connector.connect(
-        host="localhost",
-        user="airflow_user",
-        password="password",
+        host=MYSQL_HOST,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
         database=MYSQL_DB,
     )
     try:
@@ -159,72 +162,100 @@ st.caption(
 )
 
 # -----------------------------------------------------------------------------
-# Price estimate — OneMap (postal) → nearest transform row → POST /predict (HF Space).
-# User supplies flat_model (label → int index) and remaining_lease_years; rest from matched row + pool medians.
+# Price estimate — OneMap (postal) → nearest HDB row for location features → POST /predict
+# User supplies flat details; location features come from the nearest resale row
+# or dataset medians as fallback (so any Singapore address works).
 # -----------------------------------------------------------------------------
-st.subheader("Estimated resale price (hosted API)")
+st.subheader("Estimate Resale Price")
 st.caption(
-    f"**OneMap** resolves the postal code (requires **`ONEMAP_EMAIL`** / **`ONEMAP_EMAIL_PASSWORD`** in `.env`). "
-    f"The app finds the **nearest** row in your loaded table by lat/lon, builds the 16-field body, then POSTs "
-    f"**`{PREDICT_API_URL}`**. **Flat model** and **remaining lease** are taken from the form."
+    f"Enter any Singapore postal code. **OneMap** resolves it to coordinates, then the app "
+    f"looks up nearby HDB location data (MRT, bus, food distances). If no nearby HDB data "
+    f"exists, dataset averages are used — the estimate still works but is less localised. "
+    f"POSTs to **`{PREDICT_API_URL}`**."
 )
 
+_sale_months = sale_month_options()  # newest first, e.g. ["2026-03", "2026-02", ...]
+
 with st.form("price_estimate_form"):
-    postal_in = st.text_input("Postal code (6 digits)", placeholder="e.g. 200640")
-    addr_hint = st.text_input("Optional address hint (refines OneMap search)", value="")
-    fm_label = st.selectbox("Flat model", options=list(FLAT_MODEL_OPTIONS))
-    rly = st.number_input(
-        "Remaining lease (years)",
-        min_value=0.0,
-        max_value=999.0,
-        value=75.0,
-        step=1.0,
-    )
-    submitted = st.form_submit_button("Get price estimate (API)")
+    col1, col2 = st.columns(2)
+    with col1:
+        postal_in = st.text_input("Postal code (6 digits)", placeholder="e.g. 200640")
+        addr_hint = st.text_input("Address hint (Optional; Refines search)", value="")
+        fm_label = st.selectbox("Flat model", options=list(FLAT_MODEL_OPTIONS))
+        sale_month = st.selectbox("Month of sale", options=_sale_months, index=0)
+    with col2:
+        storey_label = st.selectbox(
+            "Floor level",
+            options=list(STOREY_RANGE_OPTIONS.keys()),
+            index=3,  # default: Floor 10–12
+        )
+        floor_area = st.number_input(
+            "Floor area (sqm)",
+            min_value=28.0,
+            max_value=280.0,
+            value=90.0,
+            step=1.0,
+        )
+        rly = st.number_input(
+            "Remaining lease (years)",
+            min_value=0.0,
+            max_value=99.0,
+            value=75.0,
+            step=1.0,
+        )
+    submitted = st.form_submit_button("Get price estimate")
 
 if submitted:
     digits = "".join(c for c in (postal_in or "") if c.isdigit())
     if len(digits) != 6:
         st.warning("Enter a 6-digit Singapore postal code.")
     else:
+        storey_mid_val = STOREY_RANGE_OPTIONS[storey_label]
+        sale_year, sale_mon = int(sale_month[:4]), int(sale_month[5:])
+        sale_month_idx = month_index_from_ym(sale_year, sale_mon)
         try:
-            fm_code = flat_model_option_to_int(fm_label)
+            payload, used_fallback = build_hdb_predict_payload(
+                digits,
+                addr_hint.strip() or None,
+                flat_model=fm_label,
+                floor_area_sqm=float(floor_area),
+                storey_mid=float(storey_mid_val),
+                remaining_lease_years=float(rly),
+                month_index=sale_month_idx,
+                resale_df=df,
+            )
+        except RuntimeError as e:
+            st.error(f"OneMap authentication failed: {e}")
         except ValueError as e:
             st.error(str(e))
+        except Exception as e:
+            st.error(f"Could not build prediction payload: {e}")
         else:
-            try:
-                payload = build_hdb_predict_payload(
-                    digits,
-                    addr_hint.strip() or None,
-                    flat_model=fm_code,
-                    remaining_lease_years=float(rly),
-                    resale_df=df,
+            if used_fallback:
+                st.info(
+                    "No HDB resale transactions found near this address — "
+                    "location features (MRT, bus, food distances) are estimated from "
+                    "dataset averages. The prediction is approximate."
                 )
-            except RuntimeError as e:
-                st.error(f"OneMap authentication failed: {e}")
+            try:
+                response = requests.post(PREDICT_API_URL, json=payload, timeout=120)
+                response.raise_for_status()
+                out = response.json()
+            except requests.RequestException as e:
+                st.error(f"API request failed: {e}")
             except ValueError as e:
-                st.error(str(e))
-            except Exception as e:
-                st.error(f"Could not build prediction payload: {e}")
+                st.error(f"Invalid JSON from API: {e}")
             else:
-                try:
-                    response = requests.post(PREDICT_API_URL, json=payload, timeout=120)
-                    response.raise_for_status()
-                    out = response.json()
-                except requests.RequestException as e:
-                    st.error(f"API request failed: {e}")
-                except ValueError as e:
-                    st.error(f"Invalid JSON from API: {e}")
-                else:
-                    price = out.get("predicted_price")
-                    is_dummy = out.get("is_dummy")
-                    st.metric(
-                        "Predicted resale price",
-                        f"S$ {price:,.0f}" if isinstance(price, (int, float)) else str(price),
-                    )
-                    st.caption(f"`is_dummy`: **{is_dummy}**")
-                    with st.expander("Request JSON sent to API"):
-                        st.json(payload)
+                price = out.get("predicted_price")
+                is_dummy = out.get("is_dummy")
+                st.metric(
+                    "Predicted resale price",
+                    f"S$ {price:,.0f}" if isinstance(price, (int, float)) else str(price),
+                )
+                if is_dummy:
+                    st.caption("Model not loaded — dummy prediction returned.")
+                with st.expander("Request JSON sent to API"):
+                    st.json(payload)
 
 # Data table (collapsible) — main area: expander → scrollable grid of all rows
 with st.expander("View raw table (all loaded rows)"):

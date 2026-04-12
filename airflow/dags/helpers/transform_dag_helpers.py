@@ -3,13 +3,8 @@ import pandas as pd
 from sklearn.neighbors import BallTree
 import numpy as np
 import re
-from . import data_watermarking as dw
-
-try:
-    from airflow.sdk.bases.hook import BaseHook
-except ImportError:
-    from airflow.hooks.base import BaseHook
-
+from helpers import data_watermarking as dw
+from airflow.sdk.bases.hook import BaseHook
 from helpers.dag_helpers import (
     get_dtype_mapping,
     ensure_tracking_table,

@@ -1,0 +1,39 @@
+name: Deploy to Hugging Face Spaces
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "api/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install huggingface_hub
+        run: pip install huggingface_hub
+
+      - name: Upload api/ to Hugging Face Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.upload_folder(
+              folder_path="api",
+              repo_id="hamynguyen/hdb-price-estimator",
+              repo_type="space",
+              token=os.environ["HF_TOKEN"],
+          )
+          EOF
