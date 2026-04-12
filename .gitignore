@@ -11,6 +11,7 @@ airflow/dags/*
 !airflow/dags/ingest_dag.py
 !airflow/dags/transform_dag.py
 !airflow/dags/clean_dag.py
+!airflow/dags/train_dag.py
 !airflow/dags/helpers/
 
 logs/
@@ -28,3 +29,7 @@ dataset/processed/
 
 # Local notebook scratch
 testing.ipynb
+
+# mlartifacts
+mlartifacts/
+mlflow.db

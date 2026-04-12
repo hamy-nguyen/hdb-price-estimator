@@ -4,6 +4,11 @@ try:
 except ImportError:
     from airflow.decorators import dag, task  # Airflow 2.x
 
+try:
+    from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+except ImportError:
+    from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+
 from helpers.transform_dag_helpers import (
     joinable_resale_prices,
     join_hdb,
@@ -26,9 +31,9 @@ DEFAULT_ARGS = {
 
 @dag(
     dag_id=DAG_ID,
-    default_args=DEFAULT_ARGS, 
-    schedule=None, # only run on demand for now (ie triggered manually)
-    start_date=datetime.now() - timedelta(days=1), 
+    default_args=DEFAULT_ARGS,
+    schedule=None,  # triggered by data_clean via TriggerDagRunOperator
+    start_date=datetime.now() - timedelta(days=1),
     catchup=False
 )
 def resale_feature_pipeline():
@@ -79,6 +84,13 @@ def resale_feature_pipeline():
     h = task_join_tourist_attractions()
     i = task_transform_resale_prices()
 
-    a >> b >> c >> d >> e >> f >> g >> h >> i
+    # Chain → data_train once all feature engineering is complete.
+    trigger_train = TriggerDagRunOperator(
+        task_id="trigger_data_train",
+        trigger_dag_id="data_train",
+        wait_for_completion=False,
+    )
+
+    a >> b >> c >> d >> e >> f >> g >> h >> i >> trigger_train
 
 dag = resale_feature_pipeline()

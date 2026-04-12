@@ -54,8 +54,8 @@ def predict(features: dict) -> float:
         raise HTTPException(status_code=422, detail=f"Missing feature: {e}")
 
     try:
-        result = _model.predict(X)
-        return float(np.ravel(result)[0])
+        log_pred = _model.predict(X)
+        return float(np.expm1(np.ravel(log_pred)[0]))
     except Exception as e:
         logger.error("Model inference failed: %s", e)
         raise HTTPException(status_code=500, detail="Model inference failed")

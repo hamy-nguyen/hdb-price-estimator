@@ -24,6 +24,11 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
+try:
+    from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+except ImportError:
+    from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+
 _DAGS_DIR = Path(__file__).resolve().parent
 if str(_DAGS_DIR) not in sys.path:
     sys.path.insert(0, str(_DAGS_DIR))
@@ -57,8 +62,9 @@ with DAG(
     # ------------------------------------------------------------------
     # Static datasets — each runs once, skipped on subsequent DAG runs.
     # ------------------------------------------------------------------
+    static_tasks = []
     for source_key in STATIC_SOURCES:
-        PythonOperator(
+        t = PythonOperator(
             task_id=f"ingest_{source_key}",
             python_callable=ingest_static_dataset,
             op_kwargs={
@@ -67,11 +73,12 @@ with DAG(
                 "max_retries": 3,
             },
         )
+        static_tasks.append(t)
 
     # ------------------------------------------------------------------
     # resale_flat_price — incremental monthly ingest.
     # ------------------------------------------------------------------
-    PythonOperator(
+    resale_task = PythonOperator(
         task_id="ingest_resale_flat_price",
         python_callable=ingest_resale_incremental,
         op_kwargs={
@@ -79,3 +86,14 @@ with DAG(
             "max_retries": 3,
         },
     )
+
+    # ------------------------------------------------------------------
+    # Chain → data_clean once all ingestion tasks complete.
+    # ------------------------------------------------------------------
+    trigger_clean = TriggerDagRunOperator(
+        task_id="trigger_data_clean",
+        trigger_dag_id="data_clean",
+        wait_for_completion=False,
+    )
+
+    [*static_tasks, resale_task] >> trigger_clean
