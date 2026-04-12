@@ -15,10 +15,10 @@ from predict_api_params import (
 )
 
 # App shell: page title, layout, browser tab — affects the whole window
-st.set_page_config(layout="wide", page_title="HDB resale dashboard")
+st.set_page_config(layout="wide", page_title="HDB Resale Price Prediction Dashboard")
 
 # Main header — top of the page (large title text)
-st.title("HDB resale dashboard")
+st.title("HDB Resale Price Prediction Dashboard")
 
 # Backend config (not visible): MySQL database name for the data connection
 MYSQL_DB = "HDB_Data"
@@ -165,7 +165,7 @@ st.caption(
 # User supplies flat details; location features come from the nearest resale row
 # or dataset medians as fallback (so any Singapore address works).
 # -----------------------------------------------------------------------------
-st.subheader("Estimated resale price")
+st.subheader("Estimate Resale Price")
 st.caption(
     f"Enter any Singapore postal code. **OneMap** resolves it to coordinates, then the app "
     f"looks up nearby HDB location data (MRT, bus, food distances). If no nearby HDB data "

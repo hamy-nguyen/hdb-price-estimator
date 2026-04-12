@@ -8,12 +8,21 @@ Model pickle contract
 ---------------------
 The saved pipeline accepts a 16-column DataFrame with the same column names
 and dtypes as FEATURE_COLUMNS in api/app/model.py.  flat_model and town are
-treated as numeric (label-encoded integers stored in transform_resale_flat_price).
+treated as strings (stored as-is in transform_resale_flat_price, e.g.
+'Apartment', 'Jurong West').  Everything else is numeric.
+
+Target: log_resale_price = np.log1p(resale_price).  The pipeline predicts
+in log-space; callers must apply np.expm1() to recover the dollar amount
+(handled automatically by api/app/model.py).
 
 MLflow
 ------
 All runs are recorded under the experiment EXPERIMENT_NAME.  After training,
 the winning run is tagged with best_model=true so it is easy to spot in the UI.
+Metrics logged per run:
+  log_test_rmse / log_test_mae / log_test_mape / log_test_r2  — log-space
+  dollar_test_rmse / dollar_test_mae / dollar_test_mape / dollar_test_r2 — dollar-space
+Model selection is done on log_test_rmse (what the model directly optimises).
 The MLflow tracking server is expected at MLFLOW_TRACKING_URI (default
 http://localhost:9080 to match the existing notebooks).
 """
@@ -62,7 +71,7 @@ FEATURE_COLUMNS = [
     "dist_to_food_m", "n_food_within_1km",
     "dist_to_supermarket_m", "n_supermarket_within_1km",
 ]
-TARGET_COL = "resale_price"
+TARGET_COL = "log_resale_price"
 
 # flat_model and town are stored as strings in transform_resale_flat_price
 # (e.g. 'Apartment', 'Jurong West').  Everything else is numeric.
@@ -120,12 +129,32 @@ def _load_data(engine) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series
     return train_test_split(X, y, test_size=0.2, random_state=42, shuffle=True)
 
 
-def _regression_metrics(y_true: pd.Series, y_pred: np.ndarray) -> dict:
-    rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
-    mae = float(mean_absolute_error(y_true, y_pred))
-    mape = float(np.mean(np.abs((y_true - y_pred) / y_true)) * 100)
-    r2 = float(r2_score(y_true, y_pred))
-    return dict(test_rmse=rmse, test_mae=mae, test_mape=mape, test_r2=r2)
+def _regression_metrics(y_log_true: pd.Series, y_log_pred: np.ndarray) -> dict:
+    """
+    Return metrics in both log-space and dollar-space.
+
+    y_log_true / y_log_pred are log1p-transformed prices.
+    Dollar-space values are recovered via expm1 for human-readable reporting.
+    Model selection uses log_test_rmse (what the model directly optimises).
+    """
+    log_rmse = float(np.sqrt(mean_squared_error(y_log_true, y_log_pred)))
+    log_mae = float(mean_absolute_error(y_log_true, y_log_pred))
+    log_mape = float(np.mean(np.abs((y_log_true - y_log_pred) / y_log_true)) * 100)
+    log_r2 = float(r2_score(y_log_true, y_log_pred))
+
+    y_true_dollars = np.expm1(y_log_true)
+    y_pred_dollars = np.expm1(y_log_pred)
+    dollar_rmse = float(np.sqrt(mean_squared_error(y_true_dollars, y_pred_dollars)))
+    dollar_mae = float(mean_absolute_error(y_true_dollars, y_pred_dollars))
+    dollar_mape = float(np.mean(np.abs((y_true_dollars - y_pred_dollars) / y_true_dollars)) * 100)
+    dollar_r2 = float(r2_score(y_true_dollars, y_pred_dollars))
+
+    return dict(
+        log_test_rmse=log_rmse, log_test_mae=log_mae,
+        log_test_mape=log_mape, log_test_r2=log_r2,
+        dollar_test_rmse=dollar_rmse, dollar_test_mae=dollar_mae,
+        dollar_test_mape=dollar_mape, dollar_test_r2=dollar_r2,
+    )
 
 
 def _make_pipeline(estimator) -> Pipeline:
@@ -219,16 +248,17 @@ def train_and_select_best(mysql_conn_id: str) -> None:
         metrics = _regression_metrics(y_test, y_pred)
 
         logger.info(
-            "%s — RMSE=%.0f  MAE=%.0f  MAPE=%.2f%%  R²=%.4f",
+            "%s — log RMSE=%.4f  dollar RMSE=S$%.0f  MAE=S$%.0f  MAPE=%.2f%%  R²=%.4f",
             name,
-            metrics["test_rmse"],
-            metrics["test_mae"],
-            metrics["test_mape"],
-            metrics["test_r2"],
+            metrics["log_test_rmse"],
+            metrics["dollar_test_rmse"],
+            metrics["dollar_test_mae"],
+            metrics["dollar_test_mape"],
+            metrics["dollar_test_r2"],
         )
 
         with mlflow.start_run(run_name=f"{name}_{run_month}") as run:
-            mlflow.log_params({**params, "training_month": run_month})
+            mlflow.log_params({**params, "target": "log_resale_price", "training_month": run_month})
             mlflow.log_metrics(metrics)
             mlflow.set_tag("pipeline_stage", "auto_train")
 
@@ -240,13 +270,13 @@ def train_and_select_best(mysql_conn_id: str) -> None:
                 input_example=X_train.head(5),
             )
 
-        if metrics["test_rmse"] < best_rmse:
-            best_rmse = metrics["test_rmse"]
+        if metrics["log_test_rmse"] < best_rmse:
+            best_rmse = metrics["log_test_rmse"]
             best_pipeline = pipeline
             best_run_id = run.info.run_id
             best_name = name
 
-    logger.info("Winner: %s (test RMSE=%.0f)", best_name, best_rmse)
+    logger.info("Winner: %s (log test RMSE=%.4f)", best_name, best_rmse)
 
     # Tag the winning run so it is clearly visible in the MLflow UI.
     with mlflow.start_run(run_id=best_run_id):
