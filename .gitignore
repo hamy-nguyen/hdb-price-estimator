@@ -3,6 +3,9 @@ venv/
 .env
 .DS_Store
 
+data/clean
+data/transform
+
 __pycache__/
 *.py[cod]
 
