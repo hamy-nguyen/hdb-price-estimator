@@ -2,10 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY api/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api/backend/ ./backend/
+COPY backend/ ./backend/
 COPY models/ ./models/
 
 ENV MODEL_PATH=/app/models/model.pkl
