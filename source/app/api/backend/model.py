@@ -26,7 +26,7 @@ _is_dummy = True
 
 def load_model() -> None:
     global _model, _is_dummy
-    default_path = pathlib.Path(__file__).parent.parent / "models" / "model.pkl"
+    default_path = pathlib.Path(__file__).parent.parent.parent / "models" / "model.pkl"
     model_path = os.getenv("MODEL_PATH", str(default_path))
     if os.path.exists(model_path):
         try:

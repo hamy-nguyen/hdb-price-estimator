@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from app import model
-from app.schemas import PredictRequest, PredictResponse
+from backend import model
+from backend.schemas import PredictRequest, PredictResponse
 
 load_dotenv()
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def _assert_schema_matches_feature_columns() -> None:
-    from app.schemas import PredictRequest
+    from backend.schemas import PredictRequest
     schema_fields = set(PredictRequest.model_fields.keys())
     feature_set = set(model.FEATURE_COLUMNS)
     if schema_fields != feature_set:

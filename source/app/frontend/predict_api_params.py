@@ -21,7 +21,7 @@ import pandas as pd
 import pyproj
 from dotenv import load_dotenv
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 # override=True: repo `.env` wins over a stale `export PREDICT_API_URL=http://localhost:7860/predict` in the shell.
 load_dotenv(_REPO_ROOT / ".env", override=True)
 
@@ -181,9 +181,7 @@ SG_BOUNDS = dict(west=103.6, east=104.1, south=1.15, north=1.48)
 
 
 def _load_search_onemap():
-    # Repo root is one level above this file (`web_application/predict_api_params.py`).
-    repo_root = Path(__file__).resolve().parents[1]
-    path = repo_root / "scripts" / "onemap_address_search.py"
+    path = Path(__file__).resolve().parents[1] / "scripts" / "onemap_address_search.py"
     spec = importlib.util.spec_from_file_location("_onemap_address_search", path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load OneMap search module from {path}")
