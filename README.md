@@ -71,6 +71,12 @@ sudo systemctl start mysql
 net start mysql
 ```
 
+If not of the above works:
+
+```bash
+mysqld
+```
+
 Log in as root and create the database and user:
 
 ```bash
@@ -79,7 +85,7 @@ mysql -u root -p
 
 ```sql
 CREATE DATABASE HDB_Data;
-CREATE USER 'bt4301'@'localhost' IDENTIFIED BY 'your_password';
+CREATE USER 'bt4301'@'localhost' IDENTIFIED BY '<your_password>';
 GRANT ALL PRIVILEGES ON HDB_Data.* TO 'bt4301'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
@@ -93,15 +99,25 @@ mysql -u bt4301 -p -e "SHOW DATABASES;"
 
 ### 4. Configure Airflow
 
-Set `AIRFLOW_HOME` to the project's airflow directory:
+Set `AIRFLOW_HOME` to the project's airflow directory (one-off):
 
 ```bash
-export AIRFLOW_HOME=/path/to/hdb-price-estimator/airflow
+# one-off
+export AIRFLOW_HOME=/root/hdb-price-estimator/airflow
+
+# persistent
+echo "export AIRFLOW_HOME=/root/hdb-price-estimator/source/airflow" >> ~/.bashrc
+source ~/.bashrc
 ```
 
-Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) for persistence.
+To verify:
+```bash
+echo $AIRFLOW_HOME
+```
 
-Run the database migration:
+Replace `/root/hdb-price-estimator/source` with your actual project path.
+
+Run the database migration to obtain the default files:
 
 ```bash
 airflow db migrate
@@ -111,42 +127,41 @@ Edit `airflow.cfg` (generated in `AIRFLOW_HOME`) and update these settings:
 
 ```ini
 [core]
-dags_folder = /path/to/hdb-price-estimator/airflow/dags
+dags_folder = /root/hdb-price-estimator/source/airflow/dags
 load_examples = False
 execution_api_server_url = http://localhost:8081/execution/
+auth_manager = airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
 
 [api]
 base_url = http://localhost:8081
 port = 8081
 
 [dag_processor]
-dag_bundle_config_list = [{"name": "dags-folder", "classpath": "airflow.dag_processing.bundles.local.LocalDagBundle", "kwargs": {"path": "/path/to/hdb-price-estimator/airflow/dags"}}]
+dag_bundle_config_list = [{"name": "dags-folder", "classpath": "airflow.dag_processing.bundles.local.LocalDagBundle", "kwargs": {"path": "/root/hdb-price-estimator/source/airflow/dags"}}]
 refresh_interval = 10
 ```
 
-Replace `/path/to/hdb-price-estimator` with your actual project path.
+Replace `/root/hdb-price-estimator/source` with your actual project path.
+
+Run the database migration again:
+
+```bash
+airflow db migrate
+```
 
 ### 5. Start Airflow
 
 In separate terminals (with venv activated and `AIRFLOW_HOME` exported):
 
-Option 1:
 ```bash
 airflow standalone
-```
-
-Option 2:
-```bash
-airflow scheduler &
-airflow dag-processor &
-airflow api-server
 ```
 
 Login credentials are printed on first startup and stored in `airflow/simple_auth_manager_passwords.json.generated`.
 
 Open the UI at http://localhost:8081.
 
-### 6. Start MLflow
+### 6. Start MLflow Simultaneously
 
 MLflow is used to track model training runs. Start the tracking server before triggering the pipeline:
 
@@ -167,9 +182,15 @@ airflow connections add mysql_default \
 
 Replace `your_password` with the password you set in step 3.
 
+Now, in the Admin > Connections tab, you should see one new connection called `mysql_default`:
+
+IMAGE HERE
+
 ### 8. Trigger the Pipeline
 
 The `data_ingest` DAG runs automatically on the first of every month. To trigger manually via the Airflow UI:
+
+IMAGE HERE
 
 1. Open http://localhost:8081
 2. Toggle on the `data_ingest` DAG
@@ -182,7 +203,7 @@ airflow dags unpause data_ingest
 airflow dags trigger data_ingest
 ```
 
-Triggering `data_ingest` is all that is needed — the remaining DAGs chain automatically as described below.
+Triggering `data_ingest` is all that is needed — the remaining DAGs chain automatically as described below. If the remaining DAGs do not chain automatically, ensure that the DAGs have been turned on.
 
 ## DataOps Pipeline
 
@@ -252,7 +273,9 @@ Trains three candidate models against `transform_resale_flat_price` using an 80/
 
 Each model is wrapped in a scikit-learn `Pipeline` (median imputation → standard scaling → model) so that all preprocessing is bundled inside the saved artefact.
 
-Every run is logged to MLflow (experiment: **`HDB Resale Price Prediction: Auto Training`**) with metrics (RMSE, MAE, MAPE, R²) and the full pipeline artefact. The run with the lowest test RMSE is tagged `best_model=true` in MLflow for easy identification in the UI.
+Every run is logged to MLflow (experiment: **`HDB Resale Price Prediction: Auto Training`**) with metrics (RMSE, MAE, MAPE, R²) and the full pipeline artefact. The run with the lowest test RMSE is tagged `best_model=true` in MLflow for easy identification in the UI:
+
+IMAGE HERE
 
 The winning pipeline is saved as a pickle to:
 

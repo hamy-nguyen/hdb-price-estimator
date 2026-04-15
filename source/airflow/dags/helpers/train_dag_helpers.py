@@ -85,7 +85,7 @@ EXPERIMENT_NAME = "HDB Resale Price Prediction: Auto Training"
 # Override via TRAINED_MODEL_OUTPUT_PATH env var when running in Docker / a
 # non-standard layout.
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
-DEFAULT_MODEL_OUTPUT_PATH = str(_PROJECT_ROOT / "api" / "models" / "model.pkl")
+DEFAULT_MODEL_OUTPUT_PATH = str(_PROJECT_ROOT / "app" / "models" / "model.pkl")
 
 # URL of the FastAPI /reload-model endpoint.  Set API_RELOAD_URL to match your
 # deployment (e.g. http://api:7860/reload-model inside Docker Compose).

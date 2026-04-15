@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "api/**"
+      - "source/app/**"
 
 jobs:
   deploy:
@@ -22,7 +22,7 @@ jobs:
       - name: Install huggingface_hub
         run: pip install huggingface_hub
 
-      - name: Upload api/ to Hugging Face Spaces
+      - name: Upload to Hugging Face Spaces
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -30,8 +30,17 @@ jobs:
           import os
           from huggingface_hub import HfApi
           api = HfApi()
+          # Upload api/ contents to HF Space root (Dockerfile, README.md, app/ package)
           api.upload_folder(
-              folder_path="api",
+              folder_path="source/app/api",
+              repo_id="hamynguyen/hdb-price-estimator",
+              repo_type="space",
+              token=os.environ["HF_TOKEN"],
+          )
+          # Upload models/ to models/ path so Dockerfile can COPY models/ at build time
+          api.upload_folder(
+              folder_path="source/app/models",
+              path_in_repo="models",
               repo_id="hamynguyen/hdb-price-estimator",
               repo_type="space",
               token=os.environ["HF_TOKEN"],

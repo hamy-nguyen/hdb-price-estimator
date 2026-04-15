@@ -19,7 +19,7 @@ from dateutil.relativedelta import relativedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 _log = logging.getLogger(__name__)
 
@@ -64,52 +64,52 @@ SOURCES = {
     },
     "hdb": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/hdb.csv",
+        "file_path": "data/raw/hdb.csv",
         "table_name": "raw_hdb"
     },
     "poi": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/poi.csv",
+        "file_path": "data/raw/poi.csv",
         "table_name": "raw_poi"
     },
     "bus_stops": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/bus_stops.csv",
+        "file_path": "data/raw/bus_stops.csv",
         "table_name": "raw_bus_stops"
     },
     "bus_vol": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/bus_vol.csv",
+        "file_path": "data/raw/bus_vol.csv",
         "table_name": "raw_bus_vol"
     },
     "bus_line": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/bus_line.csv",
+        "file_path": "data/raw/bus_line.csv",
         "table_name": "raw_bus_line"
     },
     "mrt": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/mrt.csv",
+        "file_path": "data/raw/mrt.csv",
         "table_name": "raw_mrt"
     },
     "transport_to_school": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/onemap_transport_to_school.csv",
+        "file_path": "data/raw/onemap_transport_to_school.csv",
         "table_name": "raw_onemap_transport_school",
     },
     "transport_to_work": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/onemap_transport_to_work.csv",
+        "file_path": "data/raw/onemap_transport_to_work.csv",
         "table_name": "raw_onemap_transport_work",
     },
     "tenancy": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/onemap_tenancy.csv",
+        "file_path": "data/raw/onemap_tenancy.csv",
         "table_name": "raw_onemap_tenancy",
     },
     "dwelling": {
         "api_type": "csv_file",
-        "file_path": "dataset/raw/onemap_dwelling.csv",
+        "file_path": "data/raw/onemap_dwelling.csv",
         "table_name": "raw_onemap_dwelling",
     }
 }
