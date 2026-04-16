@@ -304,11 +304,15 @@ With the MLflow server running at http://localhost:9080, open the **`HDB Resale 
 
 ### Backend (FastAPI)
 
-The inference API serves predictions from the trained model pickle at `source/app/models/model.pkl`.
+The inference API is hosted on Hugging Face Spaces and deployed automatically via GitHub Actions. Any push to `main` that touches `source/app/` will upload `source/app/api/` and `source/app/models/model.pkl` to the HF Space and trigger a Docker rebuild.
 
-```bash
-cd source/app/api
-uvicorn backend.main:app --host 0.0.0.0 --port 7860 --reload
+**To deploy a new model or code change:**
+1. Commit your changes (updated `model.pkl`, code fix, etc.)
+2. Push to `main` — the workflow handles the rest
+
+The live API is available at:
+```
+https://hamynguyen-hdb-price-estimator.hf.space
 ```
 
 | Endpoint | Method | Description |
@@ -316,8 +320,6 @@ uvicorn backend.main:app --host 0.0.0.0 --port 7860 --reload
 | `/health` | GET | Returns `{"status": "ok", "mode": "live"\|"dummy"}` |
 | `/predict` | POST | Accepts 16 features, returns predicted resale price |
 | `/reload-model` | POST | Hot-swaps the in-memory model from disk (called automatically by `data_train`) |
-
-If `source/app/models/model.pkl` is not found, the API starts in **dummy mode** and returns a fixed placeholder price of $500,000 until a model is available.
 
 ### Frontend (Streamlit)
 

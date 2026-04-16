@@ -49,10 +49,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import XGBRegressor
 
-try:
-    from airflow.sdk.bases.hook import BaseHook          # Airflow 3.x
-except ImportError:
-    from airflow.hooks.base import BaseHook              # Airflow 2.x
+from airflow.hooks.base import BaseHook
 
 from sqlalchemy import create_engine
 
