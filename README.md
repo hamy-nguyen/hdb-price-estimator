@@ -82,7 +82,7 @@ sudo systemctl start mysql
 net start mysql
 ```
 
-If not of the above works:
+If none of the above works:
 
 ```bash
 mysqld
@@ -195,13 +195,15 @@ Replace `your_password` with the password you set in step 3.
 
 Now, in the Admin > Connections tab, you should see one new connection called `mysql_default`:
 
-IMAGE HERE
+<img width="1280" height="377" alt="photo_2026-04-15_16-57-01" src="https://github.com/user-attachments/assets/a641a6a3-2e4a-4e4a-8b61-90bf57e0b9ea" />
+
+<img width="1280" height="228" alt="photo_2026-04-15_16-57-07" src="https://github.com/user-attachments/assets/36775119-4375-4446-bef6-a1e62b5d26cc" />
 
 ### 8. Trigger the Pipeline
 
 The `data_ingest` DAG runs automatically on the first of every month. To trigger manually via the Airflow UI:
 
-IMAGE HERE
+<img width="1280" height="749" alt="photo_2026-04-15_16-58-02" src="https://github.com/user-attachments/assets/32713883-52d1-4808-8ffa-3f14bc75b3aa" />
 
 1. Open http://localhost:8081
 2. Toggle on the `data_ingest` DAG
@@ -286,7 +288,7 @@ Each model is wrapped in a scikit-learn `Pipeline` (median imputation → standa
 
 Every run is logged to MLflow (experiment: **`HDB Resale Price Prediction: Auto Training`**) with metrics (RMSE, MAE, MAPE, R²) and the full pipeline artefact. The run with the lowest test RMSE is tagged `best_model=true` in MLflow for easy identification in the UI:
 
-IMAGE HERE
+<img width="1280" height="306" alt="photo_2026-04-15_17-26-49" src="https://github.com/user-attachments/assets/9e86c104-434c-48a6-9505-5d574dbe3b3a" />
 
 The winning pipeline is saved as a pickle to:
 
