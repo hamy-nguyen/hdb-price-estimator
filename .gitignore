@@ -21,12 +21,10 @@ pyrightconfig.json
 
 .cursor/
 
-# Local notebook scratch
-testing.ipynb
-
 # mlartifacts
 mlartifacts/
 mlflow.db
+mlruns/
 
 # Optional local tooling
 .pytest_cache/

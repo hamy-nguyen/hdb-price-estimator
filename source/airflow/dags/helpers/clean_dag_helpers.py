@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy import inspect
 from pyproj import Transformer
 
-from airflow.sdk.bases.hook import BaseHook
+from airflow.hooks.base import BaseHook
 from helpers.dag_helpers import (
     _verify_fps_from_db,
     ensure_tracking_table,
