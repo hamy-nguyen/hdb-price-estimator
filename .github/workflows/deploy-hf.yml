@@ -30,7 +30,29 @@ jobs:
           import os
           from huggingface_hub import HfApi
           api = HfApi()
-          # Upload api/ (Dockerfile, backend/, requirements.txt) to HF Space root
+
+          # Delete old files (frontend/, scripts/) from HF Spaces root
+          try:
+              api.delete_file(
+                  path="frontend",
+                  repo_id="hamynguyen/hdb-price-estimator",
+                  repo_type="space",
+                  token=os.environ["HF_TOKEN"],
+              )
+          except:
+              pass  # File doesn't exist, ignore
+
+          try:
+              api.delete_file(
+                  path="scripts",
+                  repo_id="hamynguyen/hdb-price-estimator",
+                  repo_type="space",
+                  token=os.environ["HF_TOKEN"],
+              )
+          except:
+              pass  # File doesn't exist, ignore
+
+          # Upload api/ to HF Space root
           api.upload_folder(
               folder_path="source/app/api",
               repo_id="hamynguyen/hdb-price-estimator",
@@ -38,7 +60,7 @@ jobs:
               token=os.environ["HF_TOKEN"],
               allow_patterns=["*.py", "*.txt", "Dockerfile", "README.md"],
           )
-          # Upload models/ to models/ path so Dockerfile can COPY models/ at build time
+          # Upload models/ to models/ path
           api.upload_folder(
               folder_path="source/app/models",
               path_in_repo="models",
