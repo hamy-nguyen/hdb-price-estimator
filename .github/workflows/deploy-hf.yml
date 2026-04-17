@@ -46,6 +46,5 @@ jobs:
               repo_id="hamynguyen/hdb-price-estimator",
               repo_type="space",
               token=os.environ["HF_TOKEN"],
-              allow_patterns=["*.pkl"],
           )
           EOF
