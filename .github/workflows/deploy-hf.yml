@@ -30,19 +30,12 @@ jobs:
           import os
           from huggingface_hub import HfApi
           api = HfApi()
-          # Upload api/ contents to HF Space root (Dockerfile, README.md, app/ package)
+          # Upload source/app/ (api/, backend/, models/) to HF Space root
           api.upload_folder(
-              folder_path="source/app/api",
+              folder_path="source/app",
               repo_id="hamynguyen/hdb-price-estimator",
               repo_type="space",
               token=os.environ["HF_TOKEN"],
-          )
-          # Upload models/ to models/ path so Dockerfile can COPY models/ at build time
-          api.upload_folder(
-              folder_path="source/app/models",
-              path_in_repo="models",
-              repo_id="hamynguyen/hdb-price-estimator",
-              repo_type="space",
-              token=os.environ["HF_TOKEN"],
+              ignore_patterns=["__pycache__", "*.pyc", ".venv"],
           )
           EOF
