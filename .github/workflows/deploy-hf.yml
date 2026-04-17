@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "source/app/**"
+      - ".github/workflows/deploy-hf.yml"
 
 jobs:
   deploy:
