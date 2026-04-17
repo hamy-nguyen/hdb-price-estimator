@@ -6,7 +6,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
-COPY models/ ./models/
+
+RUN python -c "\
+from huggingface_hub import hf_hub_download; \
+hf_hub_download(repo_id='hamynguyen/hdb-price-estimator-model', filename='model.pkl', local_dir='/app/models')"
 
 ENV MODEL_PATH=/app/models/model.pkl
 

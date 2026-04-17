@@ -39,12 +39,18 @@ jobs:
               token=os.environ["HF_TOKEN"],
               allow_patterns=["*.py", "*.txt", "Dockerfile", "README.md"],
           )
-          # Upload models/ to models/ path
-          api.upload_folder(
-              folder_path="source/app/models",
-              path_in_repo="models",
-              repo_id="hamynguyen/hdb-price-estimator",
-              repo_type="space",
+          # Upload model to a dedicated model repo (avoids HF Spaces LFS pointer issue)
+          api.create_repo(
+              repo_id="hamynguyen/hdb-price-estimator-model",
+              repo_type="model",
+              exist_ok=True,
+              private=False,
+          )
+          api.upload_file(
+              path_or_fileobj="source/app/models/model.pkl",
+              path_in_repo="model.pkl",
+              repo_id="hamynguyen/hdb-price-estimator-model",
+              repo_type="model",
               token=os.environ["HF_TOKEN"],
           )
           EOF
