@@ -23,3 +23,4 @@ class PredictRequest(BaseModel):
 class PredictResponse(BaseModel):
     predicted_price: float
     is_dummy: bool
+    
