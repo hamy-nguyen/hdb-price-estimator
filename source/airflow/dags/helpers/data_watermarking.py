@@ -4,11 +4,7 @@ import json
 from decimal import Decimal
 from datetime import datetime, date
 
-
-
 FINGERPRINT_COL = "_fp"
-
-
 
 def normalize_value(v):
     """
@@ -23,8 +19,6 @@ def normalize_value(v):
     if isinstance(v, (pd.Timestamp, datetime, date)):
             return v.isoformat()
     return v
-
-
 
 def row_fingerprint(row: pd.Series, exclude_cols=None) -> str:
     """
@@ -50,8 +44,6 @@ def row_fingerprint(row: pd.Series, exclude_cols=None) -> str:
     )
 
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 
 def add_fingerprint_column(df: pd.DataFrame, exclude_cols=None) -> pd.DataFrame:
     """

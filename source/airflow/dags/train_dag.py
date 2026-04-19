@@ -1,15 +1,3 @@
-"""
-Airflow DAG: train Linear Regression, Ridge, and XGBoost on
-transform_resale_flat_price; log all runs to MLflow; save the best model
-(lowest test RMSE) as a pickle for the FastAPI inference server; then
-hot-reload the API so it starts serving the new model immediately.
-
-Triggered automatically by data_transform via TriggerDagRunOperator at the
-end of every monthly pipeline run (ingest → clean → transform → train).
-Can also be triggered manually:
-    airflow dags trigger data_train
-"""
-
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta

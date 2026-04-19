@@ -1,12 +1,3 @@
-"""
-Derive the 16-field JSON body for the hosted HDB POST /predict API from postal code / address.
-
-Flow (same idea as testing.ipynb):
-  OneMap search → WGS84 on first hit → Haversine match to `transform_resale_flat_price`
-  (`latitude` / `longitude`) → read **14** API fields from the closest row; **`flat_model`** and
-  **`remaining_lease_years`** are supplied by the caller (e.g. Streamlit).
-"""
-
 from __future__ import annotations
 
 import importlib.util

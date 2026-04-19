@@ -1,32 +1,3 @@
-"""
-Training helpers: train Linear Regression, Ridge, and XGBoost against
-transform_resale_flat_price; log every run to MLflow; save the winning
-model (lowest test RMSE) as a pickle that the FastAPI /predict endpoint
-can load directly.
-
-Model pickle contract
----------------------
-The saved pipeline accepts a 16-column DataFrame with the same column names
-and dtypes as FEATURE_COLUMNS in api/app/model.py.  flat_model and town are
-treated as strings (stored as-is in transform_resale_flat_price, e.g.
-'Apartment', 'Jurong West').  Everything else is numeric.
-
-Target: log_resale_price = np.log1p(resale_price).  The pipeline predicts
-in log-space; callers must apply np.expm1() to recover the dollar amount
-(handled automatically by api/app/model.py).
-
-MLflow
-------
-All runs are recorded under the experiment EXPERIMENT_NAME.  After training,
-the winning run is tagged with best_model=true so it is easy to spot in the UI.
-Metrics logged per run:
-  log_test_rmse / log_test_mae / log_test_mape / log_test_r2  — log-space
-  dollar_test_rmse / dollar_test_mae / dollar_test_mape / dollar_test_r2 — dollar-space
-Model selection is done on log_test_rmse (what the model directly optimises).
-The MLflow tracking server is expected at MLFLOW_TRACKING_URI (default
-http://localhost:9080 to match the existing notebooks).
-"""
-
 import logging
 import os
 import pathlib
@@ -54,10 +25,6 @@ from airflow.hooks.base import BaseHook
 from sqlalchemy import create_engine
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants — keep in sync with api/app/model.py FEATURE_COLUMNS
-# ---------------------------------------------------------------------------
 
 FEATURE_COLUMNS = [
     "flat_model", "floor_area_sqm", "max_floor_lvl", "total_dwelling_units",
@@ -87,11 +54,6 @@ DEFAULT_MODEL_OUTPUT_PATH = str(_PROJECT_ROOT / "app" / "models" / "model.pkl")
 # URL of the FastAPI /reload-model endpoint.  Set API_RELOAD_URL to match your
 # deployment (e.g. http://api:7860/reload-model inside Docker Compose).
 DEFAULT_API_RELOAD_URL = "http://localhost:7860/reload-model"
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 def _get_engine(mysql_conn_id: str):
     conn = BaseHook.get_connection(mysql_conn_id)
@@ -180,9 +142,7 @@ def _make_pipeline(estimator) -> Pipeline:
     ])
 
 
-# ---------------------------------------------------------------------------
-# Candidate models
-# ---------------------------------------------------------------------------
+## Candidate models: LinearRegression, Ridge, and XGBoost
 
 def _candidates() -> list[tuple[str, dict, object]]:
     """Return (name, mlflow_params, estimator) triples."""
@@ -214,11 +174,6 @@ def _candidates() -> list[tuple[str, dict, object]]:
             ),
         ),
     ]
-
-
-# ---------------------------------------------------------------------------
-# Public task functions
-# ---------------------------------------------------------------------------
 
 def train_and_select_best(mysql_conn_id: str) -> None:
     """

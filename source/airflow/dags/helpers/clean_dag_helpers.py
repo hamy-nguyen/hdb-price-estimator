@@ -1,16 +1,3 @@
-"""
-Cleaning helpers for the data_clean DAG.
-
-Each function:
-  Static datasets: skip when clean_* table fingerprints are already valid.
-  1. Reads the raw_* table from MySQL (drops raw _fp).
-  2. Applies cleaning logic.
-  3. Writes cleaned data → reads back from SQL → adds _fp → writes with _fp.
-  4. Verifies stored _fp values match recomputed ones; retries on mismatch.
-
-resale_flat_price: incremental monthly logic driven by pipeline_tracking.
-"""
-
 import gc
 import logging
 
@@ -32,9 +19,7 @@ from helpers.dag_helpers import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
+## Shared helpers
 
 def get_mysql_engine(mysql_conn_id: str):
     conn = BaseHook.get_connection(mysql_conn_id)
@@ -152,9 +137,7 @@ def _write_with_fp(
         f"_write_with_fp: table={table} failed verification after {max_retries} attempts"
     )
 
-# ---------------------------------------------------------------------------
-# One function per raw table
-# ---------------------------------------------------------------------------
+## One function per raw table
 
 def clean_hdb(mysql_conn_id: str) -> None:
     if _verify_fps_from_db(mysql_conn_id, "clean_hdb"):
