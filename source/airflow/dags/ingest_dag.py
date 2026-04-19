@@ -1,22 +1,3 @@
-"""
-Airflow DAG: Ingest raw data into MySQL.
-
-Static datasets (tourist_attractions, carpark, hdb, poi, bus_stops, bus_vol,
-bus_line, mrt, onemap_*) are ingested exactly once — subsequent runs skip them
-once pipeline_tracking marks them as is_ingested = True.
-
-resale_flat_price uses incremental monthly logic:
-  • First run  : full ingest + registers all historical months in tracking table.
-  • Monthly run: ingests the previous calendar month only (skips if already done).
-
-For every ingest:
-  1. Data is upserted into MySQL.
-  2. The table is read back from MySQL.
-  3. SHA-256 fingerprints are recomputed from the SQL-extracted rows and compared
-     against the stored _fp column.
-  4. On mismatch the ingest retries up to 3 times before raising.
-"""
-
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -59,9 +40,7 @@ with DAG(
     tags=["ingest", "mysql", "data_gov_sg"],
 ) as dag:
 
-    # ------------------------------------------------------------------
-    # Static datasets — each runs once, skipped on subsequent DAG runs.
-    # ------------------------------------------------------------------
+    ## Static/Supplementary datasets
     static_tasks = []
     for source_key in STATIC_SOURCES:
         t = PythonOperator(
@@ -75,9 +54,7 @@ with DAG(
         )
         static_tasks.append(t)
 
-    # ------------------------------------------------------------------
-    # resale_flat_price — incremental monthly ingest.
-    # ------------------------------------------------------------------
+    # Resale flat price dataset - ingested incrementally, every month
     resale_task = PythonOperator(
         task_id="ingest_resale_flat_price",
         python_callable=ingest_resale_incremental,
@@ -87,9 +64,7 @@ with DAG(
         },
     )
 
-    # ------------------------------------------------------------------
-    # Chain → data_clean once all ingestion tasks complete.
-    # ------------------------------------------------------------------
+    # triggers data cleaning after ingestion is done
     trigger_clean = TriggerDagRunOperator(
         task_id="trigger_data_clean",
         trigger_dag_id="data_clean",

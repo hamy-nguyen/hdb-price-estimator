@@ -1,14 +1,3 @@
-"""
-Airflow DAG: Clean raw ingested tables and write to clean_* tables in MySQL.
-
-Run order:
-  - All raw tables are cleaned independently and can run in parallel.
-  - The DAG is designed to run after data_ingest has populated the raw_* tables.
-
-To trigger manually:
-  airflow dags trigger data_clean
-"""
-
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta

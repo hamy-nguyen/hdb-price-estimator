@@ -1,12 +1,3 @@
-"""
-Flexible extract and load helpers for data.gov.sg APIs and local CSVs.
-Supports: poll-download API, CKAN datastore_search API, local CSV files.
-
-Static datasets are written once; subsequent runs skip when fingerprints are
-already valid.  resale_flat_price is ingested incrementally by calendar month
-and tracked in pipeline_tracking (month, is_ingested, is_cleaned, is_transformed).
-"""
-
 import io
 import logging
 import time
@@ -410,10 +401,7 @@ def _verify_fps_from_db(
     return True
 
 
-# ---------------------------------------------------------------------------
-# Pipeline tracking table  (resale_flat_price only)
-# ---------------------------------------------------------------------------
-
+## Pipeline tracking table helpers
 
 def ensure_tracking_table(mysql_conn_id: str = "mysql_default") -> None:
     """Create pipeline_tracking (resale_flat_price only, keyed by month) if needed.

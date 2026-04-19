@@ -1,14 +1,3 @@
-"""
-OneMap: postal code (or any search text) → address details + coordinates.
-
-Uses the same email/password token as `extract_onemap.py`.
-Search API docs: https://www.onemap.gov.sg/apidocs/search/
-
-Environment (repo root `.env`):
-  ONEMAP_EMAIL
-  ONEMAP_EMAIL_PASSWORD
-"""
-
 from __future__ import annotations
 
 import os
@@ -19,7 +8,7 @@ import requests
 from dotenv import load_dotenv
 
 _ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(_ROOT / ".env")
+load_dotenv(_ROOT / ".env") # load OneMap credentials from .env (ONEMAP_EMAIL, ONEMAP_EMAIL_PASSWORD)
 
 AUTH_URL = "https://www.onemap.gov.sg/api/auth/post/getToken"
 SEARCH_URL = "https://www.onemap.gov.sg/api/common/elastic/search"
